@@ -1,0 +1,55 @@
+# Compiled binaries
+instant_tts_daemon
+tts_daemon_optimized
+fast_tts_streamer
+speak_client
+speak_hal
+instant_speak
+instant_speak_hal
+tts_streamer
+tts_test_client
+
+# Log files
+*.log
+
+# Audio cache directories
+*_cache/
+*_daemon/
+
+# Temporary audio files
+*.wav
+*.mp3
+*.ogg
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Go specific
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Build artifacts
+vendor/

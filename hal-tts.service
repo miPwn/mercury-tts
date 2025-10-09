@@ -1,0 +1,44 @@
+[Unit]
+Description=HAL TTS Streaming Daemon
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=mipwn
+Group=mipwn
+WorkingDirectory=/home/mipwn/dev/tts-pipeline
+ExecStart=/home/mipwn/dev/tts-pipeline/streaming_safe_daemon
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hal-tts
+
+# Performance optimizations for audio processing
+LimitNOFILE=65536
+LimitNPROC=4096
+Nice=-5
+
+# Security settings (relaxed for audio access)
+NoNewPrivileges=false
+ProtectSystem=false
+ProtectHome=false
+ReadWritePaths=/home/mipwn/dev/tts-pipeline /tmp /var/log /run/user/1000
+PrivateTmp=false
+PrivateDevices=false
+ProtectControlGroups=false
+ProtectKernelModules=false
+ProtectKernelTunables=false
+RestrictRealtime=false
+SupplementaryGroups=audio
+
+# Environment variables
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+Environment="HOME=/home/mipwn"
+Environment="XDG_RUNTIME_DIR=/run/user/1000"
+Environment="PULSE_RUNTIME_PATH=/run/user/1000/pulse"
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,59 @@
+#!/bin/bash
+
+# HAL Voice Command Script
+# Usage: hal 'sentence one' 'sentence two' 'sentence three'
+# OR:    hal "single long sentence with periods and URLs like mipwn.com"
+# Handles multiple arguments as separate sentences for optimal TTS processing
+
+TTS_ENDPOINT="http://192.168.1.106:8091/speak"
+SPEAKER="p254"
+
+if [ $# -eq 0 ]; then
+    echo "Usage: hal 'your text here'"
+    echo "       hal 'sentence one' 'sentence two' 'sentence three'"
+    echo "       hal \"Long sentence with URLs like mipwn.com and other content\""
+    echo ""
+    echo "Multiple arguments are treated as separate sentences for optimal"
+    echo "concurrent generation with sequential playback coordination."
+    exit 1
+fi
+
+# Check TTS service health first
+if ! curl -s --max-time 2 "http://192.168.1.106:8091/health" >/dev/null 2>&1; then
+    echo "Error: HAL TTS service not available at 192.168.1.106:8091"
+    exit 1
+fi
+
+# Build JSON array from all arguments (each argument is a sentence)
+# This enables concurrent generation across multiple TTS endpoints
+JSON_SENTENCES="["
+FIRST=true
+
+# Process all arguments as separate sentences
+for sentence in "$@"; do
+    # Skip empty arguments
+    if [ -n "$sentence" ]; then
+        if [ "$FIRST" = true ]; then
+            FIRST=false
+        else
+            JSON_SENTENCES+=","
+        fi
+        # Properly escape quotes for JSON
+        escaped_sentence=$(echo "$sentence" | sed 's/"/\\"/g')
+        JSON_SENTENCES+="\"$escaped_sentence\""
+    fi
+done
+
+JSON_SENTENCES+="]"
+
+# Create complete JSON payload
+JSON_PAYLOAD="{\"sentences\":$JSON_SENTENCES,\"speaker\":\"$SPEAKER\"}"
+
+# Send to HAL TTS service with latency optimization
+curl -X POST "$TTS_ENDPOINT" \
+    -H "Content-Type: application/json" \
+    -d "$JSON_PAYLOAD" \
+    -s -w "\n" | jq -r '.message // "Request processed"' 2>/dev/null
+
+# Exit successfully
+exit 0
