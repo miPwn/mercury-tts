@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,9 +19,9 @@ import (
 )
 
 const (
-	// Use only working TTS pod endpoints to avoid chunk failures
-	ttsURL1        = "http://10.42.0.108:5002/api/tts" // Working pod 1
-	ttsURL2        = "http://10.42.0.103:5002/api/tts" // Working pod 2
+	// Use load balancer service for automatic pod discovery
+	ttsURL1        = "http://192.168.1.106:5002/api/tts" // Load balancer service
+	ttsURL2        = "http://192.168.1.106:5002/api/tts" // Same service for reliability
 	defaultSpeaker = "p245"
 	dragThreshold  = 3 * time.Second
 	serverPort     = ":8091" // Binds to all interfaces for LAN access
@@ -385,12 +386,30 @@ func (d *StreamingDaemon) streamingPlaybackOptimized(chunks []*TTSChunk, ttsStar
 			
 			log.Printf("PLAY: Sequential playback chunk %d (order guaranteed)", chunk.Index)
 			
-			// Execute audio playback synchronously to maintain order
-			cmd := exec.Command("aplay", "-D", "default", chunk.FilePath)
-			cmd.Stderr = nil
+			// Validate file existence and permissions
+			if fileInfo, err := os.Stat(chunk.FilePath); err != nil {
+				log.Printf("ERROR: Chunk %d file not accessible: %v", chunk.Index, err)
+				close(chunk.PlayCompleted)
+				continue
+			} else {
+				log.Printf("FILE: Chunk %d validated - size: %d bytes, path: %s", chunk.Index, fileInfo.Size(), chunk.FilePath)
+			}
 			
+			// Execute audio playback synchronously to maintain order
+			log.Printf("AUDIO: Starting playback chunk %d - file: %s", chunk.Index, chunk.FilePath)
+			cmd := exec.Command("aplay", "-D", "default", chunk.FilePath)
+			
+			// Capture both stdout and stderr for detailed logging
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+			
+			playbackStart := time.Now()
 			if err := cmd.Run(); err != nil {
-				log.Printf("ERROR: Playback chunk %d failed: %v", chunk.Index, err)
+				log.Printf("ERROR: Playback chunk %d failed: %v | stderr: %s | stdout: %s", chunk.Index, err, stderr.String(), stdout.String())
+			} else {
+				playbackDuration := time.Since(playbackStart)
+				log.Printf("SUCCESS: Playback chunk %d completed in %v | stderr: %s", chunk.Index, playbackDuration, stderr.String())
 			}
 			
 			// Signal playback completion immediately
