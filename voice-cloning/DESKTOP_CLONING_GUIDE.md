@@ -18,7 +18,7 @@ python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}')"
 Transfer the prepared HAL samples from this server:
 ```bash
 # On desktop PC, copy from this server:
-scp -r mipwn@192.168.1.106:/home/mipwn/dev/tts-pipeline/voice-cloning/hal-samples/ ./hal-training/
+scp -r user@localhost:/home/user/dev/tts-pipeline/voice-cloning/hal-samples/ ./hal-training/
 ```
 
 ### 3. Desktop Voice Training Script
@@ -74,7 +74,7 @@ if __name__ == "__main__":
 ### 1. Copy Trained Model to Production
 ```bash
 # Transfer trained model from desktop to this server
-scp -r desktop-pc:./hal-voice-model/ /home/mipwn/dev/tts-pipeline/voice-cloning/
+scp -r desktop-pc:./hal-voice-model/ /home/user/dev/tts-pipeline/voice-cloning/
 ```
 
 ### 2. Replace VCTK Speaker p254
@@ -89,7 +89,7 @@ kubectl cp ./hal-voice-model/ tts-namespace/coqui-tts-pod:/app/models/p254/
 ### 3. Test Integration
 ```bash
 # Test HAL voice with existing pipeline
-curl -X POST "http://192.168.1.106:5002/api/tts" \
+curl -X POST "http://localhost:5002/api/tts" \
   -d "text=Good afternoon Dave. I am HAL 9000." \
   -d "speaker_id=p254" \
   --output test_hal_voice.wav
@@ -123,7 +123,7 @@ tts-server --model_name tts_models/multilingual/multi-dataset/xtts_v2 \
 
 ### From This Server:
 - ✅ HAL voice samples (10 WAV files, 22kHz mono)
-- ✅ Original HAL MP3 collection (/home/mipwn/hal-speech/)
+- ✅ Original HAL MP3 collection (/home/user/hal-speech/)
 
 ### For Desktop Training:
 - [ ] Coqui TTS with training support

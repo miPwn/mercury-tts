@@ -124,7 +124,7 @@ func main() {
 	
 	// Test sentences for Kate persona
 	sentences := []string{
-		"Rich, this is a comprehensive transport optimization test!",
+		"Dave, this is a comprehensive transport optimization test!",
 		"I'm now measuring DNS lookup, TCP connection, and server processing times.",
 		"The p245 voice should sound much better than that awful p227 monotone.",
 		"Let's see if direct cluster routing beats the LoadBalancer approach!",

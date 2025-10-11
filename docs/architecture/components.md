@@ -51,7 +51,7 @@ spec:
 
 #### Network Access
 - **LoadBalancer Route**: `http://localhost:5002/api/tts`
-- **Direct Cluster Route**: `http://10.43.19.35:5002/api/tts`
+- **Direct Cluster Route**: `http://localhost:5002/api/tts`
 - **Health Check**: `http://localhost:5002/health`
 
 #### Supported Voice Models
