@@ -100,3 +100,4 @@ Use the `/health` and `/stats` endpoints to monitor system performance.
 This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0) - see the [LICENSE](LICENSE) file for details.
 
 This ensures the software remains free and open source, while protecting against proprietary commercial use without contribution back to the community.
+# Workflow Test
