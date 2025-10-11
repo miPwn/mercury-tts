@@ -176,7 +176,7 @@ kubectl get pods -n tts | tee -a $LOG_FILE
 
 echo "--- BACKEND ENDPOINT PERFORMANCE ---" | tee -a $LOG_FILE
 start_time=$(date +%s.%N)
-curl -s -o /dev/null "http://192.168.1.106:5002/api/tts?text=performance%20test&speaker_id=p254"
+curl -s -o /dev/null "http://localhost:5002/api/tts?text=performance%20test&speaker_id=p254"
 end_time=$(date +%s.%N)
 duration=$(echo "$end_time - $start_time" | bc -l)
 echo "Load balancer endpoint response: ${duration}s" | tee -a $LOG_FILE

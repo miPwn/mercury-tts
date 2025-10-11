@@ -3,7 +3,7 @@
 # Streaming parallel TTS with immediate playback
 # Usage: ./streaming_tts.sh "sentence1" "sentence2" "sentence3" ...
 
-TTS_URL="http://192.168.1.106:5002/api/tts"
+TTS_URL="http://localhost:5002/api/tts"
 SPEAKER="p227"
 OUTPUT_DIR="/tmp/tts_streaming"
 TIMESTAMP=$(date +%s%N)

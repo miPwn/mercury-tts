@@ -22,8 +22,8 @@ import (
 )
 
 const (
-	ttsURL         = "http://192.168.1.106:5002/api/tts"
-	directTTSURL   = "http://10.43.19.35:5002/api/tts" // Direct K3s cluster IP
+	ttsURL         = "http://localhost:5002/api/tts"
+	directTTSURL   = "http://localhost:5002/api/tts" // Direct localhost access
 	defaultSpeaker = "p245" // Try p245 for better voice
 	maxRetries     = 3
 	serverPort     = ":8081"

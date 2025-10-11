@@ -54,9 +54,9 @@ type Config struct {
 func LoadConfig() *Config {
 	return &Config{
 		// TTS Backend - use environment or secure defaults
-		TTSLoadBalancerURL: getEnvString("TTS_LOADBALANCER_URL", "http://192.168.1.106:5002/api/tts"),
-		TTSDirectURL:       getEnvString("TTS_DIRECT_URL", "http://10.43.19.35:5002/api/tts"),
-		TTSHealthEndpoint:  getEnvString("TTS_HEALTH_ENDPOINT", "http://192.168.1.106:5002/health"),
+		TTSLoadBalancerURL: getEnvString("TTS_LOADBALANCER_URL", "http://localhost:5002/api/tts"),
+		TTSDirectURL:       getEnvString("TTS_DIRECT_URL", "http://localhost:5002/api/tts"),
+		TTSHealthEndpoint:  getEnvString("TTS_HEALTH_ENDPOINT", "http://localhost:5002/health"),
 
 		// Daemon Settings
 		DaemonPort:         getEnvString("DAEMON_PORT", "8091"),

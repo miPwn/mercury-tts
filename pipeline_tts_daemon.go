@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	ttsURL         = "http://192.168.1.106:5002/api/tts"
+	ttsURL         = "http://localhost:5002/api/tts"
 	defaultSpeaker = "p245"
 	dragThreshold  = 3 * time.Second
 	serverPort     = ":8091"

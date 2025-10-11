@@ -76,7 +76,7 @@ Internet → Starlink → Draytek Router → K3s Cluster
 ```
 
 ### Network Paths
-1. **LoadBalancer Route**: Client → Daemon → 192.168.1.106:5002 → Coqui TTS
+1. **LoadBalancer Route**: Client → Daemon → localhost:5002 → Coqui TTS
 2. **Direct Route**: Client → Daemon → 10.43.19.35:5002 → Coqui TTS (bypasses ingress)
 
 ## Deployment Topology

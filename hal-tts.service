@@ -5,10 +5,10 @@ Wants=network.target
 
 [Service]
 Type=simple
-User=mipwn
-Group=mipwn
-WorkingDirectory=/home/mipwn/dev/tts-pipeline
-ExecStart=/home/mipwn/dev/tts-pipeline/streaming_safe_daemon
+User=tts
+Group=tts
+WorkingDirectory=/opt/tts-pipeline
+ExecStart=/opt/tts-pipeline/streaming_safe_daemon
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=5
@@ -25,7 +25,7 @@ Nice=-5
 NoNewPrivileges=false
 ProtectSystem=false
 ProtectHome=false
-ReadWritePaths=/home/mipwn/dev/tts-pipeline /tmp /var/log /run/user/1000
+ReadWritePaths=/opt/tts-pipeline /tmp /var/log /run/user/1000
 PrivateTmp=false
 PrivateDevices=false
 ProtectControlGroups=false
@@ -36,7 +36,7 @@ SupplementaryGroups=audio
 
 # Environment variables
 Environment="PATH=/usr/local/bin:/usr/bin:/bin"
-Environment="HOME=/home/mipwn"
+Environment="HOME=/opt/tts-pipeline"
 Environment="XDG_RUNTIME_DIR=/run/user/1000"
 Environment="PULSE_RUNTIME_PATH=/run/user/1000/pulse"
 

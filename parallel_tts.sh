@@ -3,7 +3,7 @@
 # Parallel TTS processing with ordered playback
 # Usage: ./parallel_tts.sh "sentence1" "sentence2" "sentence3" ...
 
-TTS_URL="http://192.168.1.106:5002/api/tts"
+TTS_URL="http://localhost:5002/api/tts"
 SPEAKER="p227"
 OUTPUT_DIR="/tmp/tts_chunks"
 TIMESTAMP=$(date +%s%N)

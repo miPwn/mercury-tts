@@ -1,0 +1,134 @@
+#!/bin/bash
+
+# HALO Voice Command Script - Fixed Version with Cache Busting
+# Usage: halo-fixed 'sentence one' 'sentence two' 'sentence three'
+# OR:    halo-fixed "single long sentence"
+# Uses cloned HAL voice with cache invalidation
+
+TTS_ENDPOINT="http://localhost:5003/voice/generate"
+RESULT_ENDPOINT="http://localhost:5003/voice/result"
+VOICE="HAL-006"
+LANGUAGE="en"
+
+if [ $# -eq 0 ]; then
+    echo "Usage: halo-fixed 'your text here'"
+    echo "       halo-fixed 'sentence one' 'sentence two' 'sentence three'"
+    echo "       halo-fixed \"Long sentence with periods and other content\""
+    echo ""
+    echo "Uses cloned HAL 9000 voice with cache invalidation for authentic experience."
+    exit 1
+fi
+
+# Check if cloned voice service is available
+if ! curl -s --max-time 2 "$TTS_ENDPOINT" >/dev/null 2>&1; then
+    echo "Error: HALO cloned voice service not available at localhost:5003"
+    exit 1
+fi
+
+# Get total sentence count for final chunk detection
+TOTAL_SENTENCES=$#
+CURRENT_SENTENCE=0
+
+# Process each argument as a separate sentence
+for sentence in "$@"; do
+    CURRENT_SENTENCE=$((CURRENT_SENTENCE + 1))
+    IS_FINAL_SENTENCE=false
+    if [ $CURRENT_SENTENCE -eq $TOTAL_SENTENCES ]; then
+        IS_FINAL_SENTENCE=true
+    fi
+    # Skip empty arguments
+    if [ -n "$sentence" ]; then
+        # Generate unique filename and cache-busting identifier
+        TIMESTAMP=$(date +%s%N | cut -b1-13)
+        TEMP_FILE="/tmp/halo_${TIMESTAMP}.wav"
+        CACHE_BUST_ID=$(shuf -i 10000-99999 -n 1)
+        
+        echo "HALO generating: $sentence"
+        
+        # Preprocess text - add unique cache-busting suffix
+        processed_sentence="$sentence"
+        
+        if [ "$IS_FINAL_SENTENCE" = true ]; then
+            # Special processing for final chunk to prevent sharp cutoff
+            echo "  (Final sentence - applying extended decay processing)"
+            
+            # Ensure proper punctuation
+            if [[ ! "$processed_sentence" =~ [.!?]$ ]]; then
+                processed_sentence="${processed_sentence}."
+            fi
+            
+            # Add cache-busting invisible suffix and extended pause markers
+            processed_sentence="${processed_sentence} ... ... ..."
+        else
+            # Normal processing for non-final sentences
+            if [[ ! "$processed_sentence" =~ [.!?]$ ]]; then
+                processed_sentence="${processed_sentence}."
+            fi
+        fi
+        
+        # Add unique invisible cache-busting identifier
+        processed_sentence="${processed_sentence} [${CACHE_BUST_ID}]"
+        
+        # Escape quotes for JSON
+        escaped_sentence=$(echo "$processed_sentence" | sed 's/"/\\\"/g')
+        
+        # Generate and download audio in one operation
+        echo "  Generating with voice $VOICE (ID: ${CACHE_BUST_ID})..."
+        
+        # Generate audio and wait for completion with longer timeout
+        GENERATE_RESULT=$(timeout 45s curl -s -X POST "$TTS_ENDPOINT" \
+            -H "Content-Type: application/json" \
+            -d "{\"text\": \"$escaped_sentence\", \"voice\": \"$VOICE\", \"language\": \"$LANGUAGE\"}")
+        
+        # Check for generation success
+        if echo "$GENERATE_RESULT" | grep -q "error\|Error\|detail"; then
+            echo "  Generation failed: $GENERATE_RESULT"
+            continue
+        fi
+        
+        # Wait longer for processing to complete
+        echo "  Processing audio..."
+        sleep 8
+        
+        # Download the result
+        curl -s "$RESULT_ENDPOINT" > "$TEMP_FILE"
+        
+        if [ -s "$TEMP_FILE" ]; then
+            # Create processed audio with fade-in, padding, and extended fade-out
+            PROCESSED_FILE="/tmp/halo_processed_${TIMESTAMP}.wav"
+            
+            # Apply different processing based on final sentence
+            if [ "$IS_FINAL_SENTENCE" = true ]; then
+                # Enhanced processing for final sentence with longer decay
+                sox "$TEMP_FILE" "$PROCESSED_FILE" \
+                    pad 0.3 1.2 \
+                    fade t 0.2 0 0.8 \
+                    gain -1 2>/dev/null
+            else
+                # Standard processing for non-final sentences
+                sox "$TEMP_FILE" "$PROCESSED_FILE" \
+                    pad 0.3 0.5 \
+                    fade t 0.2 0 0.3 \
+                    gain -1 2>/dev/null
+            fi
+            
+            if [ -s "$PROCESSED_FILE" ]; then
+                aplay "$PROCESSED_FILE" 2>/dev/null
+                rm -f "$PROCESSED_FILE" 2>/dev/null
+            else
+                # Fallback to original if processing fails
+                aplay "$TEMP_FILE" 2>/dev/null
+            fi
+            
+            rm -f "$TEMP_FILE" 2>/dev/null
+        else
+            echo "HALO generation failed for: $sentence"
+        fi
+        
+        # Longer delay between sentences to ensure cache clearing
+        sleep 1.0
+    fi
+done
+
+echo "HALO processing complete."
+exit 0

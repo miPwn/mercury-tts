@@ -144,7 +144,7 @@ kubectl get pods -n tts | tee -a $LOG_FILE
 
 # TTS endpoint performance
 echo "--- BACKEND ENDPOINT PERFORMANCE ---" | tee -a $LOG_FILE
-for endpoint in "http://192.168.1.106:5002/api/tts" "http://10.42.0.103:5002/api/tts"; do
+for endpoint in "http://localhost:5002/api/tts" "http://10.42.0.103:5002/api/tts"; do
     echo "Testing endpoint: $endpoint" | tee -a $LOG_FILE
     start_time=$(date +%s.%N)
     curl -s -o /dev/null "$endpoint?text=performance%20test&speaker_id=p254"

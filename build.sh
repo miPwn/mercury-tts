@@ -71,7 +71,7 @@ check_prerequisites() {
     fi
     
     # Check if TTS container is available
-    if ! curl -s --max-time 2 http://192.168.1.106:5002/health > /dev/null 2>&1; then
+    if ! curl -s --max-time 2 http://localhost:5002/health > /dev/null 2>&1; then
         log_warning "Coqui TTS server not responding - integration tests may fail"
     fi
     

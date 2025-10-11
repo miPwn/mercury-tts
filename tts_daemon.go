@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	ttsURL         = "http://192.168.1.106:5002/api/tts"
+	ttsURL         = "http://localhost:5002/api/tts"
 	defaultSpeaker = "p280" // Deeper voice
 	maxRetries     = 3
 	serverPort     = ":8080"

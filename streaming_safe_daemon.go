@@ -20,8 +20,8 @@ import (
 
 const (
 	// Use load balancer service for automatic pod discovery
-	ttsURL1        = "http://192.168.1.106:5002/api/tts" // Load balancer service
-	ttsURL2        = "http://192.168.1.106:5002/api/tts" // Same service for reliability
+	ttsURL1        = "http://localhost:5002/api/tts" // Load balancer service
+	ttsURL2        = "http://localhost:5002/api/tts" // Same service for reliability
 	defaultSpeaker = "p245"
 	dragThreshold  = 3 * time.Second
 	serverPort     = ":8091" // Binds to all interfaces for LAN access
@@ -549,7 +549,7 @@ func main() {
 		os.RemoveAll(daemon.outputDir)
 	}()
 	
-	log.Printf("STREAMING SAFE TTS daemon ready on port %s (LAN accessible at 192.168.1.106%s)", serverPort, serverPort)
+	log.Printf("STREAMING SAFE TTS daemon ready on port %s (localhost access at localhost%s)", serverPort, serverPort)
 	
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatalf("Server failed: %v", err)

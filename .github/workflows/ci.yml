@@ -1,0 +1,75 @@
+name: TTS Pipeline CI/CD
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  release:
+    types: [ published ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.19'
+    
+    - name: Verify dependencies
+      run: go mod verify
+    
+    - name: Build all components
+      run: |
+        go build -v -o bin/instant_tts_daemon instant_tts_daemon.go
+        go build -v -o bin/streaming_safe_daemon streaming_safe_daemon.go
+        go build -v -o bin/tts_daemon_optimized tts_daemon_optimized.go
+        go build -v -o bin/fast_tts_daemon fast_tts_daemon.go
+        go build -v -o bin/speak_client speak_client.go
+        go build -v -o bin/instant_speak instant_speak.go
+        go build -v -o bin/tts_test_client tts_test_client.go
+    
+    - name: Run tests
+      run: |
+        if [ -f "tests/*.go" ]; then
+          go test ./tests/...
+        fi
+    
+    - name: Run vet
+      run: go vet ./...
+    
+    - name: Check for security issues
+      run: |
+        # Check for hardcoded IPs, secrets, personal info
+        ! grep -r "192\.168\|10\.43\|mipwn\|Rich" . --exclude-dir=.git --exclude-dir=.github || exit 1
+    
+    - name: Archive binaries
+      uses: actions/upload-artifact@v3
+      with:
+        name: tts-pipeline-binaries
+        path: bin/
+
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Run security scan
+      uses: securecodewarrior/github-action-add-sarif@v1
+      with:
+        sarif-file: 'security-scan.sarif'
+      continue-on-error: true
+
+  license-check:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Verify AGPL-3.0 license
+      run: |
+        grep -q "GNU AFFERO GENERAL PUBLIC LICENSE" LICENSE
+        grep -q "AGPL-3.0" README.md

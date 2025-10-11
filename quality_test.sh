@@ -69,7 +69,7 @@ kubectl get pods -n tts -o wide | tee -a $LOG_FILE
 
 echo "--- TTS ENDPOINT TESTS ---" | tee -a $LOG_FILE
 # Test direct TTS endpoints
-for endpoint in "http://192.168.1.106:5002/api/tts" "http://10.42.0.103:5002/api/tts"; do
+for endpoint in "http://localhost:5002/api/tts" "http://10.42.0.103:5002/api/tts"; do
     echo "Testing endpoint: $endpoint" | tee -a $LOG_FILE
     start=$(date +%s.%N)
     response=$(curl -s -w "%{time_total}" -o /dev/null "$endpoint?text=test&speaker_id=p254")

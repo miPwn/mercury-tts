@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	ttsURL     = "http://192.168.1.106:5002/api/tts"
+	ttsURL     = "http://localhost:5002/api/tts"
 	speaker    = "p260"  // Changed to p260 for more emotional range
 	maxRetries = 3
 )

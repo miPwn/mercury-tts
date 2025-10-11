@@ -2,16 +2,16 @@
 
 # HAL Voice Command Script
 # Usage: hal 'sentence one' 'sentence two' 'sentence three'
-# OR:    hal "single long sentence with periods and URLs like mipwn.com"
+# OR:    hal "single long sentence with periods and URLs like example.com"
 # Handles multiple arguments as separate sentences for optimal TTS processing
 
-TTS_ENDPOINT="http://192.168.1.106:8091/speak"
+TTS_ENDPOINT="http://localhost:8091/speak"
 SPEAKER="p254"
 
 if [ $# -eq 0 ]; then
     echo "Usage: hal 'your text here'"
     echo "       hal 'sentence one' 'sentence two' 'sentence three'"
-    echo "       hal \"Long sentence with URLs like mipwn.com and other content\""
+    echo "       hal \"Long sentence with URLs like example.com and other content\""
     echo ""
     echo "Multiple arguments are treated as separate sentences for optimal"
     echo "concurrent generation with sequential playback coordination."
@@ -19,8 +19,8 @@ if [ $# -eq 0 ]; then
 fi
 
 # Check TTS service health first
-if ! curl -s --max-time 2 "http://192.168.1.106:8091/health" >/dev/null 2>&1; then
-    echo "Error: HAL TTS service not available at 192.168.1.106:8091"
+if ! curl -s --max-time 2 "http://localhost:8091/health" >/dev/null 2>&1; then
+    echo "Error: HAL TTS service not available at localhost:8091"
     exit 1
 fi
 

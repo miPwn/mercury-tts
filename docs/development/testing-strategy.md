@@ -117,7 +117,7 @@ MaxMemoryUsage        = 100MB  // Memory limit per daemon (maintained)
 **Dependencies**: Requires running daemon instance
 
 **Test Requirements**:
-- Coqui TTS server availability (`http://192.168.1.106:5002/health`)
+- Coqui TTS server availability (`http://localhost:5002/health`)
 - Daemon running on port 8091
 - ALSA audio system (`aplay` command available)
 - `/tmp/streaming_safe_daemon/` directory access
