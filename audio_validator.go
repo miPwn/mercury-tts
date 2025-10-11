@@ -135,7 +135,6 @@ func runAudioFeedbackTest(sentence, speaker string) AudioFeedbackResult {
 	
 	// Step 5: Send TTS request
 	result.ValidationSteps = append(result.ValidationSteps, "Sending TTS request")
-	requestTime := time.Now()
 	if !sendTTSRequest(sentence, speaker, &result) {
 		result.TotalTestTime = time.Since(startTime)
 		return result
