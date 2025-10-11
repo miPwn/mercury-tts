@@ -355,7 +355,7 @@ func analyzeByFileSize(audioFile string, result *AudioFeedbackResult) bool {
 	// Basic heuristic: significant audio should result in larger file
 	// CD quality silence for 20 seconds ≈ 1.7MB
 	// Actual speech should be noticeably larger due to audio content
-	expectedSilenceSize := int64(1.7 * 1024 * 1024) // 1.7MB
+	expectedSilenceSize := int64(1740 * 1024) // 1.7MB (1740KB)
 	
 	if stat.Size() > expectedSilenceSize + 100*1024 { // +100KB buffer for speech
 		result.AudioLevelPeak = -20.0 // Estimated level for detected audio
