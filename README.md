@@ -1,6 +1,6 @@
 # TTS Pipeline
 
-A high-performance, low-latency Text-to-Speech pipeline for real-time audio generation and streaming playback.
+A high-performance, fully self-hosted low-latency Text-to-Speech pipeline for real-time audio generation and streaming playback.
 
 ## Overview
 
