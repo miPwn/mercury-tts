@@ -545,16 +545,37 @@ func (d *StreamingDaemon) handleSpeakClient(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	speaker := req.Speaker
+	if req.Speaker == "" {
+		req.Speaker = defaultSpeaker
+	}
+
+	d.generateAndRespond(w, req.Sentences, req.Speaker)
+}
+
+// GET variant to avoid JSON body issues: /speak_client_get?q=...&q=...&speaker=p254
+func (d *StreamingDaemon) handleSpeakClientGet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()["q"]
+	if len(q) == 0 {
+		http.Error(w, "No sentences provided", http.StatusBadRequest)
+		return
+	}
+	speaker := r.URL.Query().Get("speaker")
 	if speaker == "" {
 		speaker = defaultSpeaker
 	}
+	d.generateAndRespond(w, q, speaker)
+}
 
+// Shared generator that produces WAV files and responds with URLs.
+func (d *StreamingDaemon) generateAndRespond(w http.ResponseWriter, sentences []string, speaker string) {
 	// Unique prefix to avoid collisions; reuse timestamp like /speak path.
 	timestamp := strconv.FormatInt(time.Now().UnixNano(), 10)
-
-	chunks := make([]*TTSChunk, len(req.Sentences))
-	for i, sentence := range req.Sentences {
+	chunks := make([]*TTSChunk, len(sentences))
+	for i, sentence := range sentences {
 		chunks[i] = &TTSChunk{
 			Index:    i + 1,
 			Text:     sentence,
@@ -562,14 +583,12 @@ func (d *StreamingDaemon) handleSpeakClient(w http.ResponseWriter, r *http.Reque
 			Ready:    make(chan bool),
 		}
 	}
-
 	var wg sync.WaitGroup
 	for _, chunk := range chunks {
 		wg.Add(1)
 		go d.downloadTTSWithRetry(chunk, speaker, &wg)
 	}
 	wg.Wait()
-
 	urls := make([]string, 0, len(chunks))
 	for _, chunk := range chunks {
 		if chunk.Error != nil {
@@ -580,7 +599,6 @@ func (d *StreamingDaemon) handleSpeakClient(w http.ResponseWriter, r *http.Reque
 		}
 		urls = append(urls, fmt.Sprintf("/audio/%s_%d.wav", timestamp, chunk.Index))
 	}
-
 	resp := map[string]interface{}{
 		"success":    len(urls) > 0,
 		"audio_urls": urls,
@@ -598,8 +616,9 @@ func main() {
 	http.HandleFunc("/health", daemon.handleHealth)
 	// Serve generated WAV files for client playback
 	http.Handle("/audio/", http.StripPrefix("/audio/", http.FileServer(http.Dir(daemon.outputDir))))
-	// Client-facing endpoint that returns downloadable URLs rather than playing locally
+	// Client-facing endpoints that return downloadable URLs rather than playing locally
 	http.HandleFunc("/speak_client", daemon.handleSpeakClient)
+	http.HandleFunc("/speak_client_get", daemon.handleSpeakClientGet)
 	
 	server := &http.Server{
 		Addr:         serverPort, // Binds to 0.0.0.0:8091 for LAN access
