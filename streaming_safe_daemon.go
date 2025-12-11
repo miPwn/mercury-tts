@@ -24,7 +24,7 @@ const (
 	ttsURL2        = "http://localhost:5002/api/tts" // Same service for reliability
 	defaultSpeaker = "p245"
 	dragThreshold  = 3 * time.Second
-	serverPort     = ":8091" // Binds to all interfaces for LAN access
+	serverPort     = "0.0.0.0:8091" // Explicit IPv4 bind for LAN access
 	warmupCount    = 5
 	maxRetries     = 2
 	// Latency optimization: multiple TTS endpoints for load distribution
