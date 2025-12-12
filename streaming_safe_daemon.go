@@ -19,9 +19,6 @@ import (
 )
 
 const (
-	// Use load balancer service for automatic pod discovery
-	ttsURL1        = "http://localhost:5002/api/tts" // Load balancer service
-	ttsURL2        = "http://localhost:5002/api/tts" // Same service for reliability
 	defaultSpeaker = "p245"
 	dragThreshold  = 3 * time.Second
 	defaultBind    = "0.0.0.0:8091" // Default IPv4 bind; can be overridden via env TTS_BIND_ADDR
@@ -32,6 +29,11 @@ const (
 	// Zero-latency logging
 	logBufferSize = 1000 // Async log buffer size
 	logFile       = "/var/log/tts-daemon.log"
+)
+
+var (
+	ttsURL1 = getEnvDefault("TTS_URL1", "http://localhost:5002/api/tts")
+	ttsURL2 = getEnvDefault("TTS_URL2", ttsURL1)
 )
 
 type SpeakRequest struct {
@@ -614,6 +616,13 @@ func getBindAddr() string {
 		return v
 	}
 	return defaultBind
+}
+
+func getEnvDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }
 
 func main() {
