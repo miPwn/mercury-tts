@@ -645,7 +645,8 @@ func main() {
 		os.RemoveAll(daemon.outputDir)
 	}()
 	
-	log.Printf("STREAMING SAFE TTS daemon ready on port %s (localhost access at localhost%s)", serverPort, serverPort)
+	bindAddr := getBindAddr()
+	log.Printf("STREAMING SAFE TTS daemon ready on %s (localhost access at http://localhost:8091)", bindAddr)
 	
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatalf("Server failed: %v", err)
