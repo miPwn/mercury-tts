@@ -24,7 +24,7 @@ const (
 	ttsURL2        = "http://localhost:5002/api/tts" // Same service for reliability
 	defaultSpeaker = "p245"
 	dragThreshold  = 3 * time.Second
-	serverPort     = "0.0.0.0:8091" // Explicit IPv4 bind for LAN access
+	defaultBind    = "0.0.0.0:8091" // Default IPv4 bind; can be overridden via env TTS_BIND_ADDR
 	warmupCount    = 5
 	maxRetries     = 2
 	// Latency optimization: multiple TTS endpoints for load distribution
@@ -609,6 +609,13 @@ func (d *StreamingDaemon) generateAndRespond(w http.ResponseWriter, sentences []
 	json.NewEncoder(w).Encode(resp)
 }
 
+func getBindAddr() string {
+	if v := os.Getenv("TTS_BIND_ADDR"); v != "" {
+		return v
+	}
+	return defaultBind
+}
+
 func main() {
 	daemon := NewStreamingDaemon()
 	
@@ -621,7 +628,7 @@ func main() {
 	http.HandleFunc("/speak_client_get", daemon.handleSpeakClientGet)
 	
 	server := &http.Server{
-		Addr:         serverPort, // Binds to 0.0.0.0:8091 for LAN access
+		Addr:         getBindAddr(), // Bind address is configurable via env TTS_BIND_ADDR
 		Handler:      nil,
 		ReadTimeout:  2 * time.Second,
 		WriteTimeout: 3 * time.Second,
