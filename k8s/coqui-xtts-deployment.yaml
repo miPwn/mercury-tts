@@ -1,0 +1,105 @@
+---
+# Coqui XTTS v2 - Voice Cloning Service for HALO (HAL-006) voice
+# This is a SEPARATE instance from coqui-tts (VCTK).
+# DO NOT modify or merge with the coqui-tts deployment.
+#
+# Architecture:
+#   hal command  -> hal-tts (8091) -> coqui-tts (5002/VCTK)  [speaker: p254]
+#   halo command -> coqui-xtts (5003/XTTS v2) directly       [voice clone: HAL-006]
+#
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coqui-xtts
+  namespace: tts
+  labels:
+    app.kubernetes.io/instance: coqui-xtts
+    app.kubernetes.io/name: tts-xtts
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: coqui-xtts
+      app.kubernetes.io/name: tts-xtts
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: coqui-xtts
+        app.kubernetes.io/name: tts-xtts
+    spec:
+      containers:
+      - name: coqui-xtts
+        image: ghcr.io/coqui-ai/tts:latest
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          # Patch server.py for XTTS voice cloning support:
+          # 1. Convert empty strings to None so XTTS falls back to reference WAV
+          # 2. Pass style_wav as speaker_wav for voice cloning
+          sed -i '/wavs = synthesizer.tts/i\        speaker_idx = speaker_idx if speaker_idx else None\n        language_idx = language_idx if language_idx else None\n        style_wav = style_wav if style_wav else None' /root/TTS/server/server.py
+          sed -i 's/wavs = synthesizer.tts(text, speaker_name=speaker_idx, language_name=language_idx, style_wav=style_wav)/wavs = synthesizer.tts(text, speaker_name=speaker_idx, language_name=language_idx, style_wav=style_wav, speaker_wav=style_wav)/' /root/TTS/server/server.py
+          tts-server \
+            --model_path /root/.local/share/tts/tts_models--multilingual--multi-dataset--xtts_v2 \
+            --config_path /root/.local/share/tts/tts_models--multilingual--multi-dataset--xtts_v2/config.json \
+            --speakers_file_path /root/.local/share/tts/tts_models--multilingual--multi-dataset--xtts_v2/speakers_xtts.pth \
+            --port 5003
+        env:
+        - name: TTS_AGREE_LICENSE
+          value: "1"
+        ports:
+        - containerPort: 5003
+          name: http
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "3Gi"
+          limits:
+            cpu: "2000m"
+            memory: "6Gi"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 5003
+          initialDelaySeconds: 120
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 5003
+          initialDelaySeconds: 90
+          periodSeconds: 10
+        volumeMounts:
+        - name: tts-models
+          mountPath: /root/.local/share/tts
+        - name: hal-voice-reference
+          mountPath: /app/references
+      volumes:
+      - name: tts-models
+        persistentVolumeClaim:
+          claimName: tts-models
+      - name: hal-voice-reference
+        configMap:
+          name: hal-voice-reference
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: coqui-xtts
+  namespace: tts
+  labels:
+    app.kubernetes.io/instance: coqui-xtts
+    app.kubernetes.io/name: tts-xtts
+spec:
+  type: LoadBalancer
+  ports:
+  - name: http
+    port: 5003
+    targetPort: 5003
+    protocol: TCP
+  selector:
+    app.kubernetes.io/instance: coqui-xtts
+    app.kubernetes.io/name: tts-xtts
+  externalIPs:
+  - 192.168.1.106

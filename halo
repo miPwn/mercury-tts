@@ -1,17 +1,25 @@
 #!/bin/bash
 
-# HALO Voice Command Script - Authentic HAL 9000 Single Sentence
+# HALO Voice Command Script - Authentic HAL-006 Cloned Voice
 # Usage: halo 'single sentence only'
-# Uses HAL-006 voice for dramatic, cinematic delivery
+# Uses XTTS v2 voice cloning with HAL-006 reference WAV
+#
+# ARCHITECTURE (DO NOT CHANGE):
+#   hal  -> hal-tts streaming daemon (8091) -> coqui-tts VCTK (5002)  [speaker: p254]
+#   halo -> coqui-xtts XTTS v2 (5003) directly                       [voice clone: HAL-006]
+#
+# The hal and halo voice pipelines are COMPLETELY INDEPENDENT.
+# Changing one must NOT affect the other.
 
-TTS_ENDPOINT="http://localhost:8091/speak"
-SPEAKER="HAL-006"  # Using HAL-006 voice model through containerized service
+XTTS_ENDPOINT="http://localhost:5003/api/tts"
+STYLE_WAV="/app/references/001.wav"
+LANGUAGE="en"
 
 if [ $# -eq 0 ]; then
     echo "Usage: halo 'your message here'"
-    echo "       halo \"Single sentence for dramatic HAL 9000 delivery\""
+    echo "       halo \"Single sentence for dramatic HAL-006 delivery\""
     echo ""
-    echo "Uses HAL-006 voice for cinematic experience."
+    echo "Uses HAL-006 cloned voice via XTTS v2 for cinematic experience."
     echo "For multiple sentences, use the 'hal' command instead."
     exit 1
 fi
@@ -23,49 +31,55 @@ if [ $# -gt 1 ]; then
     exit 1
 fi
 
-# Check TTS service health first
-if ! curl -s --max-time 2 "http://localhost:8091/health" >/dev/null 2>&1; then
-    echo "Error: HALO TTS service not available at localhost:8091"
+# Check XTTS service health
+if ! curl -s --max-time 3 "http://localhost:5003/" >/dev/null 2>&1; then
+    echo "Error: HALO XTTS service not available at localhost:5003"
+    echo "Check: kubectl get pods -n tts -l app.kubernetes.io/instance=coqui-xtts"
     exit 1
 fi
 
-# Single sentence processing
 sentence="$1"
 
-echo "HALO generating: $sentence"
-
-# Ensure proper punctuation for dramatic delivery
+# Ensure proper punctuation
 if [[ ! "$sentence" =~ [.!?]$ ]]; then
     sentence="${sentence}."
 fi
 
-# Add extended pause markers for cinematic effect
-processed_sentence="${sentence} ... ... ..."
+echo "HALO generating: $sentence"
+echo "  Using HAL-006 cloned voice (XTTS v2)..."
 
-# Escape quotes for JSON
-escaped_sentence=$(echo "$processed_sentence" | sed 's/"/\\"/g')
+# URL-encode the text
+encoded_text=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$sentence'))" 2>/dev/null || echo "$sentence" | sed 's/ /+/g')
 
-# Send to streaming TTS service
-echo "  Generating with HAL-006 voice..."
+# Generate audio via XTTS v2 voice cloning API
+TMPFILE=$(mktemp /tmp/halo_XXXXXX.wav)
 
-# Generate using HAL-006 voice but save to file (no playback)
-echo "  Generating HAL-006 voice file..."
+HTTP_CODE=$(curl -s -o "$TMPFILE" -w "%{http_code}" \
+    "${XTTS_ENDPOINT}?text=${encoded_text}&style_wav=${STYLE_WAV}&language_id=${LANGUAGE}")
 
-# Use curl to capture the audio response but redirect to /dev/null to prevent playback
-# The containerized service will generate audio but we don't want it to play
-JSON_PAYLOAD="{\"sentences\":[\"$escaped_sentence\"],\"speaker\":\"$SPEAKER\"}"
-
-RESPONSE=$(curl -X POST "$TTS_ENDPOINT" \
-    -H "Content-Type: application/json" \
-    -d "$JSON_PAYLOAD" \
-    -s)
-
-# Check for generation success
-if echo "$RESPONSE" | grep -q "STREAMING.*sentences safely"; then
-    echo "  HAL-006 voice synthesis complete - audio generated"
-else
-    echo "  Generation failed: $RESPONSE"
+if [ "$HTTP_CODE" != "200" ]; then
+    echo "  Error: XTTS generation failed (HTTP $HTTP_CODE)"
+    rm -f "$TMPFILE"
+    exit 1
 fi
 
+# Verify we got audio data
+FILE_TYPE=$(file -b "$TMPFILE")
+if [[ ! "$FILE_TYPE" =~ WAV|RIFF|audio ]]; then
+    echo "  Error: Invalid audio response from XTTS"
+    rm -f "$TMPFILE"
+    exit 1
+fi
+
+echo "  Playing HAL-006 voice..."
+
+# Play audio
+aplay "$TMPFILE" 2>/dev/null || paplay "$TMPFILE" 2>/dev/null || {
+    echo "  Error: No audio player available (tried aplay, paplay)"
+    rm -f "$TMPFILE"
+    exit 1
+}
+
+rm -f "$TMPFILE"
 echo "HALO processing complete."
 exit 0
