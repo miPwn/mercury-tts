@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hal-tts
+  namespace: tts
+  labels:
+    app: hal-tts
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: hal-tts
+  template:
+    metadata:
+      labels:
+        app: hal-tts
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 29
+      containers:
+      - name: hal-tts
+        image: hal-tts-streaming:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8091
+          protocol: TCP
+        env:
+        - name: PATH
+          value: "/usr/local/bin:/usr/bin:/bin"
+        - name: HOME
+          value: "/app"
+        - name: PULSE_RUNTIME_PATH
+          value: "/run/user/1000/pulse"
+        - name: PULSE_SERVER
+          value: "unix:/run/user/1000/pulse/native"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8091
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8091
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: tmp-storage
+          mountPath: /tmp
+        - name: audio-cache
+          mountPath: /app/cache
+        - name: pulse-socket
+          mountPath: /run/user/1000/pulse
+          readOnly: true
+      volumes:
+      - name: tmp-storage
+        emptyDir: {}
+      - name: audio-cache
+        emptyDir: {}
+      - name: pulse-socket
+        hostPath:
+          path: /run/user/1000/pulse
+          type: Directory
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hal-tts
+  namespace: tts
+  labels:
+    app: hal-tts
+spec:
+  type: LoadBalancer
+  ports:
+  - name: http
+    port: 8091
+    targetPort: 8091
+    protocol: TCP
+  selector:
+    app: hal-tts
+  externalIPs:
+  - 192.168.1.106

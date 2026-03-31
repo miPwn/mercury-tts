@@ -53,3 +53,17 @@ Thumbs.db
 
 # Build artifacts
 vendor/
+# Compiled daemon binary
+streaming_safe_daemon
+
+# Backup files
+*.backup-*
+*.pre-stream
+*.prev-*
+*.new
+*_patch.txt
+halo_old
+Dockerfile.*.backup-*
+
+# Empty placeholder files
+k8s/*.new

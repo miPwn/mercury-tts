@@ -38,8 +38,8 @@ for sentence in "$@"; do
         else
             JSON_SENTENCES+=","
         fi
-        # Properly escape quotes for JSON
-        escaped_sentence=$(echo "$sentence" | sed 's/"/\\"/g')
+        # Properly escape quotes and special characters for JSON
+        escaped_sentence=$(echo "$sentence" | sed 's/\\/\\\\/g; s/"/\\\"/g')
         JSON_SENTENCES+="\"$escaped_sentence\""
     fi
 done

@@ -1,0 +1,35 @@
+FROM ubuntu:22.04
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    curl \
+    alsa-utils \
+    pulseaudio \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create app directory
+WORKDIR /app
+
+# Copy the HAL TTS binary
+COPY streaming_safe_daemon /app/streaming_safe_daemon
+COPY bin/vban_emitter /usr/local/bin/vban_emitter
+COPY bin/vban_receptor /usr/local/bin/vban_receptor
+RUN chmod +x /app/streaming_safe_daemon /usr/local/bin/vban_emitter /usr/local/bin/vban_receptor
+
+# Create necessary directories
+RUN mkdir -p /tmp /app/cache
+
+# Set environment variables
+ENV PATH="/usr/local/bin:/usr/bin:/bin"
+ENV HOME="/app"
+
+# Expose the port
+EXPOSE 8091
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8091/health || exit 1
+
+# Run the HAL TTS daemon
+CMD ["/app/streaming_safe_daemon"]
