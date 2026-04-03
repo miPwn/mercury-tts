@@ -1,5 +1,7 @@
 #!/bin/bash
 
+HALO_SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" && pwd)
+
 XTTS_ENDPOINT_INSTANT="${HALO_TTS_ENDPOINT_INSTANT:-http://localhost:5003/api/tts}"
 XTTS_ENDPOINT_STORY="${HALO_TTS_ENDPOINT_STORY:-${HALO_TTS_ENDPOINT_BATCH:-http://localhost:5004/api/tts}}"
 XTTS_ENDPOINT_INSTANT_FALLBACK="${HALO_TTS_ENDPOINT_INSTANT_FALLBACK:-http://localhost:5003/api/tts}"
@@ -38,6 +40,7 @@ HALO_AWARE_RECENT_HISTORY_LIMIT="${HALO_AWARE_RECENT_HISTORY_LIMIT:-6}"
 HALO_AWARE_RELEVANT_HISTORY_LIMIT="${HALO_AWARE_RELEVANT_HISTORY_LIMIT:-3}"
 HALO_AWARE_SUMMARY_ENTRY_LIMIT="${HALO_AWARE_SUMMARY_ENTRY_LIMIT:-12}"
 HALO_AWARE_SUMMARY_MAX_CHARS="${HALO_AWARE_SUMMARY_MAX_CHARS:-1800}"
+HALO_SENSORY_PYTHON="${HALO_SENSORY_PYTHON:-python3}"
 
 RENDER_ONLY=false
 READ_MODE=false
@@ -51,6 +54,9 @@ AWARE_TRIGGER_KIND=""
 AWARE_TRIGGER_SOURCE=""
 AWARE_TRIGGER_ID=""
 AWARE_TOPIC=""
+SENSORY_COMMAND_MODE=false
+SENSORY_ACTION=""
+SENSORY_SENSOR="all"
 STORYGEN_TOPIC=""
 STORYGEN_MAX_WORDS=""
 SENTENCE_INPUT=""
@@ -71,6 +77,9 @@ usage() {
     echo "       halo aware on|off|status"
     echo "       halo aware trigger [commentary|observation|monologue|story] [optional topic]"
     echo "       halo aware tick"
+    echo "       halo sensory status"
+    echo "       halo sensory scan [host|network|photoprism|blink|all]"
+    echo "       halo sensory commentary [host|network|photoprism|blink|all]"
 }
 
 current_tts_endpoint() {
@@ -1173,6 +1182,52 @@ handle_aware_command() {
     esac
 }
 
+handle_sensory_command() {
+    local module_root args response should_generate reason topic fingerprint trigger_key summary metadata_json
+
+    module_root="$HALO_SCRIPT_DIR"
+    args=("$HALO_SENSORY_PYTHON" -m sensory.cli --halo-root "$HALO_ROOT")
+
+    case "$SENSORY_ACTION" in
+        status)
+            args+=(status)
+            ;;
+        scan)
+            args+=(scan "$SENSORY_SENSOR")
+            ;;
+        commentary)
+            response=$(PYTHONPATH="$module_root${PYTHONPATH:+:$PYTHONPATH}" "$HALO_SENSORY_PYTHON" -m sensory.cli --halo-root "$HALO_ROOT" commentary "$SENSORY_SENSOR") || return 1
+            printf '%s\n' "$response"
+
+            should_generate=$(printf '%s' "$response" | python3 -c 'import json, sys; print("1" if json.load(sys.stdin).get("should_generate") else "0", end="")') || return 1
+            if [ "$should_generate" != "1" ]; then
+                return 0
+            fi
+
+            if ! aware_mode_is_enabled; then
+                echo "HAL aware mode is OFF; sensory commentary candidate recorded but not expanded." >&2
+                return 0
+            fi
+
+            topic=$(printf '%s' "$response" | python3 -c 'import json, sys; print(json.load(sys.stdin).get("candidate", {}).get("topic", ""), end="")') || return 1
+            fingerprint=$(printf '%s' "$response" | python3 -c 'import json, sys; print(json.load(sys.stdin).get("candidate", {}).get("fingerprint", ""), end="")') || return 1
+            trigger_key=$(printf '%s' "$response" | python3 -c 'import json, sys; print(json.load(sys.stdin).get("trigger_key", ""), end="")') || return 1
+            summary=$(printf '%s' "$response" | python3 -c 'import json, sys; print(json.load(sys.stdin).get("candidate", {}).get("summary", ""), end="")') || return 1
+            metadata_json=$(printf '%s' "$response" | python3 -c 'import json, sys; print(json.dumps({"sensor": json.load(sys.stdin).get("sensor_name", "all")}), end="")') || return 1
+
+            execute_aware_generation "observation" "$topic" "$trigger_key" "$fingerprint" || return 1
+            PYTHONPATH="$module_root${PYTHONPATH:+:$PYTHONPATH}" "$HALO_SENSORY_PYTHON" -m sensory.cli --halo-root "$HALO_ROOT" mark-commentary --trigger-key "$trigger_key" --fingerprint "$fingerprint" --summary "$summary" --metadata-json "$metadata_json" >/dev/null || return 1
+            return 0
+            ;;
+        *)
+            usage
+            return 1
+            ;;
+    esac
+
+    PYTHONPATH="$module_root${PYTHONPATH:+:$PYTHONPATH}" "${args[@]}"
+}
+
 select_commentary_line() {
     local commentary_file="$1"
     local commentary_db
@@ -1958,6 +2013,46 @@ if [ $# -eq 0 ]; then
 fi
 
 case "$1" in
+    sensory)
+        SENSORY_COMMAND_MODE=true
+        shift
+        if [ $# -eq 0 ]; then
+            usage
+            exit 1
+        fi
+        SENSORY_ACTION="$1"
+        shift
+        case "$SENSORY_ACTION" in
+            status)
+                if [ $# -ne 0 ]; then
+                    usage
+                    exit 1
+                fi
+                ;;
+            scan)
+                if [ $# -gt 1 ]; then
+                    usage
+                    exit 1
+                fi
+                if [ $# -eq 1 ]; then
+                    SENSORY_SENSOR="$1"
+                fi
+                ;;
+            commentary)
+                if [ $# -gt 1 ]; then
+                    usage
+                    exit 1
+                fi
+                if [ $# -eq 1 ]; then
+                    SENSORY_SENSOR="$1"
+                fi
+                ;;
+            *)
+                usage
+                exit 1
+                ;;
+        esac
+        ;;
     aware)
         AWARE_COMMAND_MODE=true
         shift
@@ -2057,6 +2152,11 @@ fi
 
 if [ "$AWARE_COMMAND_MODE" = true ]; then
     handle_aware_command
+    exit $?
+fi
+
+if [ "$SENSORY_COMMAND_MODE" = true ]; then
+    handle_sensory_command
     exit $?
 fi
 

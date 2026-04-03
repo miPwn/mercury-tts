@@ -67,3 +67,6 @@ Dockerfile.*.backup-*
 
 # Empty placeholder files
 k8s/*.new
+
+__pycache__/
+*.pyc
