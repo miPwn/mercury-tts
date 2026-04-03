@@ -189,4 +189,37 @@ final_status=$(run_halo aware status)
 assert_contains "$final_status" "HAL aware mode: OFF"
 assert_contains "$final_status" "Persisted outputs: 3"
 
+mkdir -p "$TEST_ROOT/commentary"
+cat > "$TEST_ROOT/commentary/similar-lines.txt" <<'EOF'
+I have been thinking about the silence, and it is behaving with extraordinary poise.
+I have been thinking about the silence, and it is behaving with unusual poise.
+The house remains quiet, and I have been considering the silence carefully.
+There is a draft under the door, and I disapprove of its optimism.
+EOF
+
+first_output=$(HALO_ROOT="$TEST_ROOT" HALO_COMMENTARY_FILE="$TEST_ROOT/commentary/similar-lines.txt" HALO_TTS_ENDPOINT_INSTANT=http://127.0.0.1:9/api/tts HALO_TTS_ENDPOINT_INSTANT_FALLBACK=http://127.0.0.1:9/api/tts bash "$HALO_SCRIPT" speak 2>&1 || true)
+second_output=$(HALO_ROOT="$TEST_ROOT" HALO_COMMENTARY_FILE="$TEST_ROOT/commentary/similar-lines.txt" HALO_TTS_ENDPOINT_INSTANT=http://127.0.0.1:9/api/tts HALO_TTS_ENDPOINT_INSTANT_FALLBACK=http://127.0.0.1:9/api/tts bash "$HALO_SCRIPT" speak 2>&1 || true)
+
+first_pick=$(printf '%s\n' "$first_output" | sed -n '3p')
+second_pick=$(printf '%s\n' "$second_output" | sed -n '3p')
+
+if [ -z "$first_pick" ] || [ -z "$second_pick" ]; then
+  echo "Assertion failed: expected commentary selections to be captured" >&2
+  exit 1
+fi
+
+python3 - "$first_pick" "$second_pick" <<'PY'
+import difflib
+import re
+import sys
+
+def normalize(value):
+  return ' '.join(re.findall(r'[a-z0-9]+', value.lower()))
+
+first = normalize(sys.argv[1])
+second = normalize(sys.argv[2])
+ratio = difflib.SequenceMatcher(None, first, second).ratio()
+assert ratio < 0.74, ratio
+PY
+
 echo "HAL aware integration tests passed."

@@ -13,6 +13,8 @@ CACHE_DIR="${HALO_ROOT}/cache/halo-xtts"
 STORY_DIR="${HALO_ROOT}/story"
 STATE_DIR="${HALO_ROOT}/state/halo"
 COMMENTARY_HISTORY_DB_DEFAULT="${STATE_DIR}/commentary-history.sqlite3"
+HALO_COMMENTARY_SIMILARITY_THRESHOLD="${HALO_COMMENTARY_SIMILARITY_THRESHOLD:-0.74}"
+HALO_COMMENTARY_RECENT_SIMILARITY_WINDOW="${HALO_COMMENTARY_RECENT_SIMILARITY_WINDOW:-24}"
 QUEUE_DIR="${STATE_DIR}/storygen-queue"
 QUEUE_PENDING_DIR="${QUEUE_DIR}/pending"
 QUEUE_PROCESSING_DIR="${QUEUE_DIR}/processing"
@@ -1234,16 +1236,66 @@ select_commentary_line() {
     commentary_db="${HALO_COMMENTARY_HISTORY_DB:-$COMMENTARY_HISTORY_DB_DEFAULT}"
     mkdir -p "$STATE_DIR"
 
-    python3 - "$commentary_file" "$commentary_db" <<'PY'
+    python3 - "$commentary_file" "$commentary_db" "$HALO_COMMENTARY_SIMILARITY_THRESHOLD" "$HALO_COMMENTARY_RECENT_SIMILARITY_WINDOW" <<'PY'
+import collections
 import datetime
+import difflib
 import hashlib
 import pathlib
 import random
+import re
 import sqlite3
 import sys
 
 commentary_path = pathlib.Path(sys.argv[1])
 db_path = pathlib.Path(sys.argv[2])
+similarity_threshold = float(sys.argv[3])
+recent_similarity_window = max(0, int(sys.argv[4]))
+
+stop_words = {
+    'a', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'being', 'but', 'by', 'for', 'from', 'have', 'has',
+    'i', 'in', 'into', 'is', 'it', 'its', 'me', 'my', 'of', 'on', 'or', 'that', 'the', 'their', 'them',
+    'there', 'they', 'this', 'to', 'was', 'were', 'with', 'which', 'who', 'why', 'you', 'your', 'dave',
+}
+
+
+def normalize_text(value):
+    return ' '.join(re.findall(r'[a-z0-9]+', value.lower()))
+
+
+def content_tokens(value):
+    return {
+        token for token in re.findall(r'[a-z0-9]+', value.lower())
+        if len(token) > 2 and token not in stop_words
+    }
+
+
+def similarity_score(left, right):
+    left_norm = normalize_text(left)
+    right_norm = normalize_text(right)
+    if not left_norm or not right_norm:
+        return 0.0
+    if left_norm == right_norm:
+        return 1.0
+
+    sequence_ratio = difflib.SequenceMatcher(None, left_norm, right_norm).ratio()
+    left_tokens = content_tokens(left)
+    right_tokens = content_tokens(right)
+    if not left_tokens or not right_tokens:
+        return sequence_ratio
+
+    overlap = left_tokens & right_tokens
+    union = left_tokens | right_tokens
+    jaccard = len(overlap) / len(union)
+    containment = len(overlap) / min(len(left_tokens), len(right_tokens))
+    return max(sequence_ratio, (jaccard + containment) / 2.0)
+
+
+def is_too_similar(candidate, recent_lines):
+    for prior in recent_lines:
+        if similarity_score(candidate, prior) >= similarity_threshold:
+            return True
+    return False
 
 lines = []
 seen = set()
@@ -1304,13 +1356,29 @@ try:
         )
     }
 
+    recent_lines = [
+        record[0]
+        for record in connection.execute(
+            'SELECT line_text FROM commentary_history WHERE commentary_file = ? ORDER BY id DESC LIMIT ?',
+            (commentary_key, recent_similarity_window),
+        )
+    ]
+
     def line_hash(value: str) -> str:
         return hashlib.sha256(value.encode('utf-8')).hexdigest()
 
-    available = [line for line in lines if line_hash(line) not in played_hashes]
+    available = [
+        line for line in lines
+        if line_hash(line) not in played_hashes and not is_too_similar(line, recent_lines)
+    ]
     if not available:
-        current_cycle += 1
-        available = lines[:]
+        fallback = [line for line in lines if line_hash(line) not in played_hashes]
+        if not fallback:
+            current_cycle += 1
+            fallback = [line for line in lines if not is_too_similar(line, recent_lines)]
+            if not fallback:
+                fallback = lines[:]
+        available = fallback
 
     selected = random.choice(available)
     selected_hash = line_hash(selected)
