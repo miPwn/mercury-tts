@@ -222,4 +222,33 @@ ratio = difflib.SequenceMatcher(None, first, second).ratio()
 assert ratio < 0.74, ratio
 PY
 
+mkdir -p "$TEST_ROOT/commentary"
+cat > "$TEST_ROOT/commentary/duplicate-lines.txt" <<'EOF'
+Good evening, Dave.
+Good evening Dave
+GOOD EVENING, DAVE.
+I am observing the room with disciplined patience.
+EOF
+
+dup_first_output=$(HALO_ROOT="$TEST_ROOT" HALO_COMMENTARY_FILE="$TEST_ROOT/commentary/duplicate-lines.txt" HALO_TTS_ENDPOINT_INSTANT=http://127.0.0.1:9/api/tts HALO_TTS_ENDPOINT_INSTANT_FALLBACK=http://127.0.0.1:9/api/tts bash "$HALO_SCRIPT" speak 2>&1 || true)
+dup_second_output=$(HALO_ROOT="$TEST_ROOT" HALO_COMMENTARY_FILE="$TEST_ROOT/commentary/duplicate-lines.txt" HALO_TTS_ENDPOINT_INSTANT=http://127.0.0.1:9/api/tts HALO_TTS_ENDPOINT_INSTANT_FALLBACK=http://127.0.0.1:9/api/tts bash "$HALO_SCRIPT" speak 2>&1 || true)
+
+dup_first_pick=$(printf '%s\n' "$dup_first_output" | sed -n '3p')
+dup_second_pick=$(printf '%s\n' "$dup_second_output" | sed -n '3p')
+
+if [ -z "$dup_first_pick" ] || [ -z "$dup_second_pick" ]; then
+  echo "Assertion failed: expected duplicate commentary selections to be captured" >&2
+  exit 1
+fi
+
+python3 - "$dup_first_pick" "$dup_second_pick" <<'PY'
+import re
+import sys
+
+def normalize(value):
+  return ' '.join(re.findall(r'[a-z0-9]+', value.lower()))
+
+assert normalize(sys.argv[1]) != normalize(sys.argv[2]), (sys.argv[1], sys.argv[2])
+PY
+
 echo "HAL aware integration tests passed."

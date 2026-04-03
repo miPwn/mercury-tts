@@ -511,7 +511,7 @@ At a glance:
 ## Additional Documents
 
 - [VOICE_ARCHITECTURE.md](VOICE_ARCHITECTURE.md)
-- For the LED matrix integration details, see the `HALO_DOTMATRIX.md` document in the `python3-idotmatrix-library` workspace.
+- For the LED matrix integration details, see the `HALO_DOTMATRIX.md` document in the `hal-display` workspace.
 
 ## License
 

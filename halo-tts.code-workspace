@@ -13,8 +13,8 @@
 			"path": "../mercury-voice-recognition"
 		},
 		{
-			"path": "../python3-idotmatrix-library"
-		}
+      "path": "../hal-display",
+    }
 	],
 	"settings": {
 		"workbench.colorCustomizations": {
