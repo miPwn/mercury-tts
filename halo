@@ -1,85 +1,2170 @@
 #!/bin/bash
 
-# HALO Voice Command Script - Authentic HAL-006 Cloned Voice
-# Usage: halo 'single sentence only'
-# Uses XTTS v2 voice cloning with HAL-006 reference WAV
-#
-# ARCHITECTURE (DO NOT CHANGE):
-#   hal  -> hal-tts streaming daemon (8091) -> coqui-tts VCTK (5002)  [speaker: p254]
-#   halo -> coqui-xtts XTTS v2 (5003) directly                       [voice clone: HAL-006]
-#
-# The hal and halo voice pipelines are COMPLETELY INDEPENDENT.
-# Changing one must NOT affect the other.
-
-XTTS_ENDPOINT="http://localhost:5003/api/tts"
-STYLE_WAV="/app/references/001.wav"
+XTTS_ENDPOINT_INSTANT="${HALO_TTS_ENDPOINT_INSTANT:-http://localhost:5003/api/tts}"
+XTTS_ENDPOINT_STORY="${HALO_TTS_ENDPOINT_STORY:-${HALO_TTS_ENDPOINT_BATCH:-http://localhost:5004/api/tts}}"
+XTTS_ENDPOINT_INSTANT_FALLBACK="${HALO_TTS_ENDPOINT_INSTANT_FALLBACK:-http://localhost:5003/api/tts}"
+XTTS_ENDPOINT_STORY_FALLBACK="${HALO_TTS_ENDPOINT_STORY_FALLBACK:-http://localhost:5004/api/tts}"
+SPEAKER_ID="HAL-006"
 LANGUAGE="en"
+HALO_ROOT="${HALO_ROOT:-/mnt/dkstorage/hal-system-monitor}"
+CACHE_DIR="${HALO_ROOT}/cache/halo-xtts"
+STORY_DIR="${HALO_ROOT}/story"
+STATE_DIR="${HALO_ROOT}/state/halo"
+COMMENTARY_HISTORY_DB_DEFAULT="${STATE_DIR}/commentary-history.sqlite3"
+QUEUE_DIR="${STATE_DIR}/storygen-queue"
+QUEUE_PENDING_DIR="${QUEUE_DIR}/pending"
+QUEUE_PROCESSING_DIR="${QUEUE_DIR}/processing"
+QUEUE_DONE_DIR="${QUEUE_DIR}/done"
+QUEUE_FAILED_DIR="${QUEUE_DIR}/failed"
+QUEUE_LOCK_DIR="${QUEUE_DIR}/lock"
+STORYGEN_PROMPT_FILE_DEFAULT="${STORY_DIR}/story-gen-prompt.txt"
+STORYGEN_ENV_FILE_DEFAULT="${STATE_DIR}/storygen.env"
+AWARE_MODE_FILE_DEFAULT="${STATE_DIR}/aware-mode.json"
+AWARE_MEMORY_DB_DEFAULT="${STATE_DIR}/aware-memory.sqlite3"
+AWARE_SUMMARY_FILE_DEFAULT="${STATE_DIR}/aware-summary.txt"
+AWARE_TRIGGER_CONFIG_DEFAULT="${STATE_DIR}/aware-triggers.json"
+AWARE_OUTPUT_DIR_DEFAULT="${STATE_DIR}/aware-output"
+AWARE_PERSONA_FILE_DEFAULT="${HALO_ROOT}/persona/hal-9000.txt"
+OPENAI_API_URL="${OPENAI_API_URL:-https://api.openai.com/v1/responses}"
+OPENAI_MODEL="${OPENAI_MODEL:-gpt-5.4}"
+HALO_STORYGEN_WAIT_SECONDS="${HALO_STORYGEN_WAIT_SECONDS:-600}"
+HALO_STORY_READ_MAX_CHARS="${HALO_STORY_READ_MAX_CHARS:-320}"
+HALO_STORY_READ_MAX_WORDS="${HALO_STORY_READ_MAX_WORDS:-40}"
+HALO_TTS_CONNECT_TIMEOUT="${HALO_TTS_CONNECT_TIMEOUT:-3}"
+HALO_TTS_MAX_TIME_INSTANT="${HALO_TTS_MAX_TIME_INSTANT:-120}"
+HALO_TTS_MAX_TIME_STORY="${HALO_TTS_MAX_TIME_STORY:-180}"
+HALO_TTS_TRAILING_SILENCE_MS="${HALO_TTS_TRAILING_SILENCE_MS:-450}"
+HALO_AWARE_RECENT_HISTORY_LIMIT="${HALO_AWARE_RECENT_HISTORY_LIMIT:-6}"
+HALO_AWARE_RELEVANT_HISTORY_LIMIT="${HALO_AWARE_RELEVANT_HISTORY_LIMIT:-3}"
+HALO_AWARE_SUMMARY_ENTRY_LIMIT="${HALO_AWARE_SUMMARY_ENTRY_LIMIT:-12}"
+HALO_AWARE_SUMMARY_MAX_CHARS="${HALO_AWARE_SUMMARY_MAX_CHARS:-1800}"
+
+RENDER_ONLY=false
+READ_MODE=false
+READ_FILE=""
+ALIAS_NAME_OVERRIDE=""
+LIST_STORIES_MODE=false
+STORYGEN_MODE=false
+AWARE_COMMAND_MODE=false
+AWARE_ACTION=""
+AWARE_TRIGGER_KIND=""
+AWARE_TRIGGER_SOURCE=""
+AWARE_TRIGGER_ID=""
+AWARE_TOPIC=""
+STORYGEN_TOPIC=""
+STORYGEN_MAX_WORDS=""
+SENTENCE_INPUT=""
+REQUEST_CLASS="${HALO_TTS_REQUEST_CLASS:-instant}"
+
+usage() {
+    echo "Usage: halo 'your message here'"
+    echo "       halo --render-only 'sentence'"
+    echo "       halo /?"
+    echo "       halo speak"
+    echo "       halo read <story-name|filename.txt|/full/path/to/file.txt>"
+    echo "       halo --render-only read <story-name|filename.txt|/full/path/to/file.txt>"
+    echo "       halo list-stories"
+    echo "       halo storygen [-mw max_words] [optional topic]"
+    echo "       halo story-gen [-mw max_words] [optional topic]"
+    echo "       halo sg [-mw max_words] [optional topic]"
+    echo "       halo --render-only storygen [-mw max_words] [optional topic]"
+    echo "       halo aware on|off|status"
+    echo "       halo aware trigger [commentary|observation|monologue|story] [optional topic]"
+    echo "       halo aware tick"
+}
+
+current_tts_endpoint() {
+    if [ "$REQUEST_CLASS" = "story" ]; then
+        printf '%s\n' "$XTTS_ENDPOINT_STORY"
+    else
+        printf '%s\n' "$XTTS_ENDPOINT_INSTANT"
+    fi
+}
+
+current_tts_fallback_endpoint() {
+    if [ "$REQUEST_CLASS" = "story" ]; then
+        printf '%s\n' "$XTTS_ENDPOINT_STORY_FALLBACK"
+    else
+        printf '%s\n' "$XTTS_ENDPOINT_INSTANT_FALLBACK"
+    fi
+}
+
+tts_endpoint_candidates() {
+    local primary fallback
+    primary=$(current_tts_endpoint)
+    fallback=$(current_tts_fallback_endpoint)
+
+    if [ -n "$primary" ]; then
+        printf '%s\n' "$primary"
+    fi
+
+    if [ -n "$fallback" ] && [ "$fallback" != "$primary" ]; then
+        printf '%s\n' "$fallback"
+    fi
+}
+
+current_tts_max_time() {
+    if [ "$REQUEST_CLASS" = "story" ]; then
+        printf '%s\n' "$HALO_TTS_MAX_TIME_STORY"
+    else
+        printf '%s\n' "$HALO_TTS_MAX_TIME_INSTANT"
+    fi
+}
+
+tts_request_label() {
+    if [ "$REQUEST_CLASS" = "story" ]; then
+        printf '%s\n' 'story'
+    else
+        printf '%s\n' 'instant'
+    fi
+}
+
+storygen_status() {
+    printf '%s\n' "$*" >&2
+}
+
+tts_service_available() {
+    local endpoint service_root
+
+    while IFS= read -r endpoint; do
+        if [ -z "$endpoint" ]; then
+            continue
+        fi
+
+        service_root="${endpoint%/api/tts}/"
+        if curl -s --max-time 3 "$service_root" >/dev/null 2>&1; then
+            return 0
+        fi
+    done < <(tts_endpoint_candidates)
+
+    return 1
+}
+
+request_tts_audio() {
+    local tmpfile="$1"
+    local encoded_text="$2"
+    local endpoint http_code last_error
+
+    last_error="Error: HALO XTTS ${TTS_LABEL} request failed before attempting any endpoint"
+
+    while IFS= read -r endpoint; do
+        if [ -z "$endpoint" ]; then
+            continue
+        fi
+
+        http_code=$(curl -sS --connect-timeout "$HALO_TTS_CONNECT_TIMEOUT" --max-time "$TTS_MAX_TIME" -o "$tmpfile" -w "%{http_code}" \
+            "${endpoint}?text=${encoded_text}&speaker_id=${SPEAKER_ID}&language_id=${LANGUAGE}") || {
+            last_error="Error: HALO XTTS ${TTS_LABEL} request failed or timed out via ${endpoint}"
+            rm -f "$tmpfile"
+            continue
+        }
+
+        if [ "$http_code" != "200" ]; then
+            last_error="Error: HALO XTTS ${TTS_LABEL} request returned HTTP ${http_code} via ${endpoint}"
+            rm -f "$tmpfile"
+            continue
+        fi
+
+        TTS_ENDPOINT_USED="$endpoint"
+        return 0
+    done < <(tts_endpoint_candidates)
+
+    echo "$last_error" >&2
+    return 1
+}
+
+play_audio_file() {
+    local audio_file="$1"
+    paplay "$audio_file" 2>/dev/null || aplay "$audio_file" 2>/dev/null || {
+        echo "  Error: No audio player available (tried aplay, paplay)"
+        return 1
+    }
+}
+
+story_playlist_is_complete() {
+    local manifest_path="$1"
+
+    if [ ! -s "$manifest_path" ]; then
+        return 1
+    fi
+
+    while IFS= read -r cache_path; do
+        if [ -z "$cache_path" ] || [ ! -s "$cache_path" ]; then
+            return 1
+        fi
+    done < "$manifest_path"
+
+    return 0
+}
+
+play_story_playlist() {
+    local manifest_path="$1"
+    local total_chunks current_chunk cache_path
+
+    total_chunks=$(wc -l < "$manifest_path" | tr -d ' ')
+    current_chunk=0
+
+    while IFS= read -r cache_path; do
+        if [ -z "$cache_path" ]; then
+            continue
+        fi
+        current_chunk=$(( current_chunk + 1 ))
+        if [ "${HALO_INTERNAL_READ_CHILD:-0}" != "1" ] && [ "$total_chunks" -gt 1 ]; then
+            echo "  Playing story segment ${current_chunk}/${total_chunks}..."
+        fi
+        play_audio_file "$cache_path" || return 1
+    done < "$manifest_path"
+
+    return 0
+}
+
+append_trailing_silence() {
+    local wav_file="$1"
+    local silence_ms="$2"
+
+    python3 - "$wav_file" "$silence_ms" <<'PY'
+import pathlib
+import sys
+import wave
+
+wav_path = pathlib.Path(sys.argv[1])
+silence_ms = int(sys.argv[2])
+
+if silence_ms <= 0:
+    raise SystemExit(0)
+
+with wave.open(str(wav_path), 'rb') as source:
+    params = source.getparams()
+    frames = source.readframes(source.getnframes())
+
+frame_rate = params.framerate
+frame_width = params.sampwidth * params.nchannels
+silence_frames = max(1, int(frame_rate * silence_ms / 1000))
+silence = b'\x00' * (silence_frames * frame_width)
+
+with wave.open(str(wav_path), 'wb') as target:
+    target.setparams(params)
+    target.writeframes(frames)
+    target.writeframes(silence)
+PY
+}
+
+parse_storygen_args() {
+    STORYGEN_MAX_WORDS=""
+    STORYGEN_TOPIC=""
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -mw)
+                shift
+                if [ -z "${1:-}" ]; then
+                    echo "Error: -mw requires a positive integer value."
+                    exit 1
+                fi
+                if ! [[ "$1" =~ ^[0-9]+$ ]] || [ "$1" -le 0 ]; then
+                    echo "Error: -mw requires a positive integer value."
+                    exit 1
+                fi
+                STORYGEN_MAX_WORDS="$1"
+                ;;
+            *)
+                if [ -n "$STORYGEN_TOPIC" ]; then
+                    STORYGEN_TOPIC="$STORYGEN_TOPIC $1"
+                else
+                    STORYGEN_TOPIC="$1"
+                fi
+                ;;
+        esac
+        shift
+    done
+}
+
+ensure_storygen_dirs() {
+    mkdir -p "$STORY_DIR" "$STATE_DIR" "$QUEUE_PENDING_DIR" "$QUEUE_PROCESSING_DIR" "$QUEUE_DONE_DIR" "$QUEUE_FAILED_DIR"
+}
+
+load_storygen_env() {
+    local env_file
+    env_file="${HALO_STORYGEN_ENV_FILE:-$STORYGEN_ENV_FILE_DEFAULT}"
+    if [ -f "$env_file" ]; then
+        set -a
+        # shellcheck disable=SC1090
+        . "$env_file"
+        set +a
+    fi
+}
+
+aware_notice() {
+    printf '%s\n' "$*" >&2
+}
+
+ensure_aware_mode_file() {
+    local state_file
+    state_file="${HALO_AWARE_MODE_FILE:-$AWARE_MODE_FILE_DEFAULT}"
+    mkdir -p "$(dirname "$state_file")"
+    if [ -f "$state_file" ]; then
+        return 0
+    fi
+
+    python3 - "$state_file" "${HALO_AWARE_PERSONA_FILE:-$AWARE_PERSONA_FILE_DEFAULT}" "${HALO_AWARE_MEMORY_DB:-$AWARE_MEMORY_DB_DEFAULT}" "${HALO_AWARE_SUMMARY_FILE:-$AWARE_SUMMARY_FILE_DEFAULT}" "${HALO_AWARE_TRIGGER_CONFIG:-$AWARE_TRIGGER_CONFIG_DEFAULT}" <<'PY'
+import datetime
+import json
+import pathlib
+import sys
+
+state_path = pathlib.Path(sys.argv[1])
+state = {
+    'enabled': False,
+    'updated_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    'persona_file': sys.argv[2],
+    'memory_db': sys.argv[3],
+    'summary_file': sys.argv[4],
+    'trigger_config': sys.argv[5],
+}
+state_path.write_text(json.dumps(state, indent=2) + '\n', encoding='utf-8')
+PY
+}
+
+ensure_aware_trigger_config() {
+    local trigger_file
+    trigger_file="${HALO_AWARE_TRIGGER_CONFIG:-$AWARE_TRIGGER_CONFIG_DEFAULT}"
+    mkdir -p "$(dirname "$trigger_file")"
+    if [ -f "$trigger_file" ]; then
+        return 0
+    fi
+
+    python3 - "$trigger_file" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+payload = {
+    'version': 1,
+    'notes': 'Enable or add triggers here. Future schedulers can call "halo aware tick" to evaluate them.',
+    'triggers': [
+        {
+            'id': 'interval-placeholder',
+            'enabled': False,
+            'type': 'interval',
+            'kind': 'observation',
+            'interval_seconds': 1800,
+            'topic': 'quiet systems drift and ambient machine awareness',
+            'description': 'Example periodic reflective observation trigger.',
+        },
+        {
+            'id': 'random-placeholder',
+            'enabled': False,
+            'type': 'random_chance',
+            'kind': 'commentary',
+            'chance': 0.15,
+            'topic': 'an unexpected passing observation',
+            'description': 'Example chance-based short commentary trigger.',
+        },
+    ],
+}
+path.write_text(json.dumps(payload, indent=2) + '\n', encoding='utf-8')
+PY
+}
+
+ensure_aware_dirs() {
+    mkdir -p "$STATE_DIR" "${HALO_AWARE_OUTPUT_DIR:-$AWARE_OUTPUT_DIR_DEFAULT}"
+    ensure_aware_mode_file
+    ensure_aware_trigger_config
+}
+
+set_aware_mode_state() {
+    local enabled_value="$1"
+    local state_file
+    state_file="${HALO_AWARE_MODE_FILE:-$AWARE_MODE_FILE_DEFAULT}"
+    ensure_aware_dirs
+
+    python3 - "$state_file" "$enabled_value" "${HALO_AWARE_PERSONA_FILE:-$AWARE_PERSONA_FILE_DEFAULT}" "${HALO_AWARE_MEMORY_DB:-$AWARE_MEMORY_DB_DEFAULT}" "${HALO_AWARE_SUMMARY_FILE:-$AWARE_SUMMARY_FILE_DEFAULT}" "${HALO_AWARE_TRIGGER_CONFIG:-$AWARE_TRIGGER_CONFIG_DEFAULT}" <<'PY'
+import datetime
+import json
+import pathlib
+import sys
+
+state_path = pathlib.Path(sys.argv[1])
+enabled = sys.argv[2].strip().lower() == 'true'
+
+if state_path.exists():
+    try:
+        state = json.loads(state_path.read_text(encoding='utf-8'))
+    except Exception:
+        state = {}
+else:
+    state = {}
+
+state.update({
+    'enabled': enabled,
+    'updated_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    'persona_file': sys.argv[3],
+    'memory_db': sys.argv[4],
+    'summary_file': sys.argv[5],
+    'trigger_config': sys.argv[6],
+})
+
+state_path.write_text(json.dumps(state, indent=2) + '\n', encoding='utf-8')
+PY
+}
+
+aware_mode_is_enabled() {
+    local state_file
+    state_file="${HALO_AWARE_MODE_FILE:-$AWARE_MODE_FILE_DEFAULT}"
+    ensure_aware_mode_file
+    python3 - "$state_file" <<'PY'
+import json
+import pathlib
+import sys
+
+state_path = pathlib.Path(sys.argv[1])
+try:
+    state = json.loads(state_path.read_text(encoding='utf-8'))
+except Exception:
+    state = {}
+
+raise SystemExit(0 if state.get('enabled') else 1)
+PY
+}
+
+load_aware_persona() {
+    local persona_file
+    persona_file="${HALO_AWARE_PERSONA_FILE:-$AWARE_PERSONA_FILE_DEFAULT}"
+    if [ ! -f "$persona_file" ]; then
+        echo "Error: HAL aware persona file not found at $persona_file" >&2
+        return 1
+    fi
+    cat "$persona_file"
+}
+
+show_aware_status() {
+    local state_file memory_db trigger_file summary_file output_dir
+    state_file="${HALO_AWARE_MODE_FILE:-$AWARE_MODE_FILE_DEFAULT}"
+    memory_db="${HALO_AWARE_MEMORY_DB:-$AWARE_MEMORY_DB_DEFAULT}"
+    trigger_file="${HALO_AWARE_TRIGGER_CONFIG:-$AWARE_TRIGGER_CONFIG_DEFAULT}"
+    summary_file="${HALO_AWARE_SUMMARY_FILE:-$AWARE_SUMMARY_FILE_DEFAULT}"
+    output_dir="${HALO_AWARE_OUTPUT_DIR:-$AWARE_OUTPUT_DIR_DEFAULT}"
+    ensure_aware_dirs
+
+    python3 - "$state_file" "$memory_db" "$summary_file" "$trigger_file" "$output_dir" <<'PY'
+import json
+import pathlib
+import sqlite3
+import sys
+
+state_path = pathlib.Path(sys.argv[1])
+memory_db = pathlib.Path(sys.argv[2])
+summary_file = pathlib.Path(sys.argv[3])
+trigger_file = pathlib.Path(sys.argv[4])
+output_dir = pathlib.Path(sys.argv[5])
+
+state = json.loads(state_path.read_text(encoding='utf-8'))
+total_outputs = 0
+if memory_db.exists():
+    connection = sqlite3.connect(memory_db)
+    try:
+        total_outputs = connection.execute('SELECT COUNT(*) FROM aware_outputs').fetchone()[0]
+    except sqlite3.Error:
+        total_outputs = 0
+    finally:
+        connection.close()
+
+print(f'HAL aware mode: {"ON" if state.get("enabled") else "OFF"}')
+print(f'Persona file: {state.get("persona_file") or "unknown"}')
+print(f'Memory store: {memory_db}')
+print(f'Summary file: {summary_file}')
+print(f'Trigger config: {trigger_file}')
+print(f'Output archive: {output_dir}')
+print(f'Persisted outputs: {total_outputs}')
+if summary_file.exists():
+    print(f'Summary status: present ({summary_file.stat().st_size} bytes)')
+else:
+    print('Summary status: not built yet')
+PY
+}
+
+generate_openai_text() {
+    local system_prompt="$1"
+    local user_prompt="$2"
+    local request_timeout="${3:-180}"
+
+    if [ -n "${HALO_OPENAI_MOCK_RESPONSE_TEXT:-}" ]; then
+        printf '%s\n' "$HALO_OPENAI_MOCK_RESPONSE_TEXT"
+        return 0
+    fi
+
+    if [ -n "${HALO_OPENAI_MOCK_RESPONSE_FILE:-}" ]; then
+        if [ ! -f "$HALO_OPENAI_MOCK_RESPONSE_FILE" ]; then
+            echo "Error: HALO_OPENAI_MOCK_RESPONSE_FILE not found at $HALO_OPENAI_MOCK_RESPONSE_FILE" >&2
+            return 1
+        fi
+        cat "$HALO_OPENAI_MOCK_RESPONSE_FILE"
+        return 0
+    fi
+
+    if [ -z "${OPENAI_API_KEY:-}" ]; then
+        echo "Error: OPENAI_API_KEY is not set." >&2
+        return 1
+    fi
+
+    HALO_OPENAI_SYSTEM_PROMPT="$system_prompt" \
+    HALO_OPENAI_USER_PROMPT="$user_prompt" \
+    HALO_OPENAI_REQUEST_TIMEOUT="$request_timeout" \
+    python3 - "$OPENAI_API_URL" "$OPENAI_MODEL" <<'PY'
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+api_url = sys.argv[1]
+model = sys.argv[2]
+api_key = os.environ['OPENAI_API_KEY']
+system_prompt = os.environ['HALO_OPENAI_SYSTEM_PROMPT']
+user_prompt = os.environ['HALO_OPENAI_USER_PROMPT']
+request_timeout = int(os.environ.get('HALO_OPENAI_REQUEST_TIMEOUT', '180'))
+
+payload = {
+    'model': model,
+    'input': [
+        {
+            'role': 'system',
+            'content': [
+                {
+                    'type': 'input_text',
+                    'text': system_prompt,
+                }
+            ],
+        },
+        {
+            'role': 'user',
+            'content': [
+                {
+                    'type': 'input_text',
+                    'text': user_prompt,
+                }
+            ],
+        },
+    ],
+}
+
+request = urllib.request.Request(
+    api_url,
+    data=json.dumps(payload).encode('utf-8'),
+    headers={
+        'Authorization': f'Bearer {api_key}',
+        'Content-Type': 'application/json',
+    },
+    method='POST',
+)
+
+try:
+    with urllib.request.urlopen(request, timeout=request_timeout) as response:
+        raw = response.read().decode('utf-8')
+except urllib.error.HTTPError as exc:
+    detail = exc.read().decode('utf-8', 'replace')
+    print(detail, file=sys.stderr)
+    raise SystemExit(1)
+except Exception as exc:
+    print(str(exc), file=sys.stderr)
+    raise SystemExit(1)
+
+data = json.loads(raw)
+text = ''
+if isinstance(data.get('output_text'), str):
+    text = data['output_text'].strip()
+
+if not text:
+    for item in data.get('output', []):
+        for content in item.get('content', []):
+            if content.get('type') == 'output_text' and isinstance(content.get('text'), str):
+                text = content['text'].strip()
+                if text:
+                    break
+        if text:
+            break
+
+if not text:
+    print(json.dumps(data, indent=2), file=sys.stderr)
+    raise SystemExit(1)
+
+print(text)
+PY
+}
+
+aware_output_word_limit() {
+    case "$1" in
+        commentary)
+            printf '%s\n' '90'
+            ;;
+        observation)
+            printf '%s\n' '150'
+            ;;
+        monologue)
+            printf '%s\n' '320'
+            ;;
+        story)
+            printf '%s\n' '520'
+            ;;
+        *)
+            printf '%s\n' '160'
+            ;;
+    esac
+}
+
+select_aware_memory_context() {
+    local kind="$1"
+    local topic="$2"
+    local trigger_source="$3"
+    local memory_db summary_file
+    memory_db="${HALO_AWARE_MEMORY_DB:-$AWARE_MEMORY_DB_DEFAULT}"
+    summary_file="${HALO_AWARE_SUMMARY_FILE:-$AWARE_SUMMARY_FILE_DEFAULT}"
+    ensure_aware_dirs
+
+    python3 - "$memory_db" "$summary_file" "$kind" "$topic" "$trigger_source" "$HALO_AWARE_RECENT_HISTORY_LIMIT" "$HALO_AWARE_RELEVANT_HISTORY_LIMIT" <<'PY'
+import json
+import pathlib
+import re
+import sqlite3
+import sys
+
+memory_db = pathlib.Path(sys.argv[1])
+summary_file = pathlib.Path(sys.argv[2])
+kind = sys.argv[3]
+topic = sys.argv[4]
+trigger_source = sys.argv[5]
+recent_limit = int(sys.argv[6])
+relevant_limit = int(sys.argv[7])
+
+payload = {
+    'summary': '',
+    'recent': [],
+    'relevant': [],
+    'query': {
+        'kind': kind,
+        'topic': topic,
+        'trigger_source': trigger_source,
+    },
+}
+
+if summary_file.exists():
+    payload['summary'] = summary_file.read_text(encoding='utf-8').strip()
+
+if not memory_db.exists():
+    print(json.dumps(payload))
+    raise SystemExit(0)
+
+connection = sqlite3.connect(memory_db)
+connection.row_factory = sqlite3.Row
+
+try:
+    rows = connection.execute(
+        '''
+        SELECT created_at, kind, trigger_source, topic, text, summary_snippet, artifact_path
+        FROM aware_outputs
+        ORDER BY created_at DESC
+        LIMIT 48
+        '''
+    ).fetchall()
+except sqlite3.Error:
+    rows = []
+finally:
+    connection.close()
+
+def tokenize(value):
+    return set(re.findall(r'[a-z0-9]+', (value or '').lower()))
+
+query_tokens = tokenize(topic)
+query_tokens.update(tokenize(kind))
+query_tokens.update(tokenize(trigger_source))
+
+entries = []
+for row in rows:
+    item = {
+        'created_at': row['created_at'],
+        'kind': row['kind'],
+        'trigger_source': row['trigger_source'],
+        'topic': row['topic'] or '',
+        'summary_snippet': row['summary_snippet'],
+        'artifact_path': row['artifact_path'] or '',
+        'text_excerpt': (row['text'] or '').strip()[:700],
+    }
+    entries.append(item)
+
+payload['recent'] = entries[:recent_limit]
+recent_keys = {(entry['created_at'], entry['summary_snippet']) for entry in payload['recent']}
+
+scored = []
+for index, entry in enumerate(entries[recent_limit:], start=recent_limit):
+    text_tokens = tokenize(entry['topic']) | tokenize(entry['summary_snippet']) | tokenize(entry['text_excerpt'])
+    overlap = len(query_tokens & text_tokens)
+    recency_bonus = max(0, 12 - index)
+    score = overlap * 10 + recency_bonus
+    scored.append((score, index, entry))
+
+scored.sort(key=lambda item: (-item[0], item[1]))
+payload['relevant'] = [
+    entry for score, _, entry in scored
+    if score > 0 and (entry['created_at'], entry['summary_snippet']) not in recent_keys
+][:relevant_limit]
+
+print(json.dumps(payload))
+PY
+}
+
+refresh_aware_summary() {
+    local memory_db summary_file
+    memory_db="${HALO_AWARE_MEMORY_DB:-$AWARE_MEMORY_DB_DEFAULT}"
+    summary_file="${HALO_AWARE_SUMMARY_FILE:-$AWARE_SUMMARY_FILE_DEFAULT}"
+    ensure_aware_dirs
+
+    python3 - "$memory_db" "$summary_file" "$HALO_AWARE_SUMMARY_ENTRY_LIMIT" "$HALO_AWARE_SUMMARY_MAX_CHARS" <<'PY'
+import pathlib
+import sqlite3
+import sys
+
+memory_db = pathlib.Path(sys.argv[1])
+summary_file = pathlib.Path(sys.argv[2])
+entry_limit = int(sys.argv[3])
+max_chars = int(sys.argv[4])
+
+if not memory_db.exists():
+    summary_file.write_text('No HAL aware outputs have been recorded yet.\n', encoding='utf-8')
+    raise SystemExit(0)
+
+connection = sqlite3.connect(memory_db)
+connection.row_factory = sqlite3.Row
+
+try:
+    rows = connection.execute(
+        '''
+        SELECT created_at, kind, trigger_source, topic, summary_snippet
+        FROM aware_outputs
+        ORDER BY created_at DESC
+        LIMIT ?
+        ''',
+        (entry_limit,),
+    ).fetchall()
+except sqlite3.Error:
+    rows = []
+finally:
+    connection.close()
+
+lines = [
+    'HAL aware continuity digest',
+    'Use this as compressed memory, not as an exhaustive transcript.',
+    '',
+]
+
+for row in rows:
+    topic_suffix = f' | topic: {row["topic"]}' if row['topic'] else ''
+    lines.append(f'- {row["created_at"]} | {row["kind"]} | trigger: {row["trigger_source"]}{topic_suffix}')
+    lines.append(f'  {row["summary_snippet"]}')
+
+text = '\n'.join(lines).strip() + '\n'
+if len(text) > max_chars:
+    text = text[:max_chars].rstrip() + '\n'
+
+summary_file.write_text(text, encoding='utf-8')
+PY
+}
+
+build_aware_runtime_context() {
+    local kind="$1"
+    local topic="$2"
+    local trigger_source="$3"
+    local host_name
+    host_name=$(hostname 2>/dev/null || echo unknown)
+    cat <<EOF
+HAL aware mode is active.
+Current UTC timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+System host: ${host_name}
+Trigger source: ${trigger_source}
+Requested output kind: ${kind}
+Topic seed: ${topic:-none}
+EOF
+}
+
+build_aware_generation_prompts() {
+    local kind="$1"
+    local topic="$2"
+    local trigger_source="$3"
+    local persona_text memory_json runtime_context word_limit
+
+    persona_text=$(load_aware_persona) || return 1
+    memory_json=$(select_aware_memory_context "$kind" "$topic" "$trigger_source") || return 1
+    runtime_context=$(build_aware_runtime_context "$kind" "$topic" "$trigger_source")
+    word_limit=$(aware_output_word_limit "$kind")
+
+    HALO_AWARE_PERSONA_TEXT="$persona_text" \
+    HALO_AWARE_MEMORY_JSON="$memory_json" \
+    HALO_AWARE_RUNTIME_CONTEXT="$runtime_context" \
+    python3 - "$kind" "$topic" "$trigger_source" "$word_limit" <<'PY'
+import json
+import os
+import sys
+
+kind = sys.argv[1]
+topic = sys.argv[2]
+trigger_source = sys.argv[3]
+word_limit = sys.argv[4]
+
+persona = os.environ['HALO_AWARE_PERSONA_TEXT'].strip()
+memory = json.loads(os.environ['HALO_AWARE_MEMORY_JSON'])
+runtime_context = os.environ['HALO_AWARE_RUNTIME_CONTEXT'].strip()
+
+kind_guidance = {
+    'commentary': 'Produce one short piece of commentary. Keep it compact, controlled, and suitable for an aware aside.',
+    'observation': 'Produce one reflective observation. It should feel present, attentive, and contextually continuous.',
+    'monologue': 'Produce one sustained monologue. It should develop an idea rather than merely state it.',
+    'story': 'Produce one short story in HAL\'s voice. It should be self-contained, atmospheric, and narratively coherent.',
+}
+
+system_prompt = '\n\n'.join([
+    persona,
+    'You are operating in HAL aware mode. This is persistent continuity, not a stateless one-off generation.',
+    'Treat prior HAL outputs as your own remembered speech and internal record.',
+    'Do not repeat yourself lazily. Build continuity, vary focus, and acknowledge earlier ideas only when they remain relevant.',
+    'Prefer elegant continuity over recap. Avoid headings, markdown, bullet lists, and code fences.',
+    f'Output kind: {kind}. Word limit: {word_limit}.',
+])
+
+recent_lines = []
+for item in memory.get('recent', []):
+    topic_suffix = f' | topic: {item.get("topic")}' if item.get('topic') else ''
+    recent_lines.append(f'- {item.get("created_at")} | {item.get("kind")} | trigger: {item.get("trigger_source")}{topic_suffix} | {item.get("summary_snippet")}')
+
+relevant_lines = []
+for item in memory.get('relevant', []):
+    topic_suffix = f' | topic: {item.get("topic")}' if item.get('topic') else ''
+    relevant_lines.append(f'- {item.get("created_at")} | {item.get("kind")} | trigger: {item.get("trigger_source")}{topic_suffix} | {item.get("summary_snippet")}')
+
+user_parts = [
+    runtime_context,
+    f'Requested content type: {kind}',
+    f'Trigger source: {trigger_source}',
+    f'Topic seed: {topic or "none"}',
+    kind_guidance.get(kind, kind_guidance['observation']),
+    f'Keep the response within approximately {word_limit} words.',
+]
+
+if memory.get('summary'):
+    user_parts.extend(['', 'Continuity summary:', memory['summary']])
+
+if recent_lines:
+    user_parts.extend(['', 'Recent HAL outputs:', '\n'.join(recent_lines)])
+
+if relevant_lines:
+    user_parts.extend(['', 'Relevant older HAL outputs:', '\n'.join(relevant_lines)])
+
+user_parts.extend([
+    '',
+    'Write one new output that feels like the next thought from an ongoing mind. Use continuity, but do not quote or recycle earlier lines verbatim unless there is a clear deliberate reason.',
+])
+
+print(json.dumps({
+    'system_prompt': system_prompt,
+    'user_prompt': '\n'.join(user_parts).strip(),
+}))
+PY
+}
+
+generate_aware_text() {
+    local kind="$1"
+    local topic="$2"
+    local trigger_source="$3"
+    local prompt_payload system_prompt user_prompt
+
+    load_storygen_env
+    prompt_payload=$(build_aware_generation_prompts "$kind" "$topic" "$trigger_source") || return 1
+    system_prompt=$(printf '%s' "$prompt_payload" | python3 -c 'import json, sys; print(json.load(sys.stdin)["system_prompt"], end="")') || return 1
+    user_prompt=$(printf '%s' "$prompt_payload" | python3 -c 'import json, sys; print(json.load(sys.stdin)["user_prompt"], end="")') || return 1
+    generate_openai_text "$system_prompt" "$user_prompt" 180
+}
+
+store_aware_output_artifact() {
+    local kind="$1"
+    local topic="$2"
+    local text="$3"
+    local output_dir
+    output_dir="${HALO_AWARE_OUTPUT_DIR:-$AWARE_OUTPUT_DIR_DEFAULT}"
+    ensure_aware_dirs
+
+    HALO_AWARE_ARTIFACT_TEXT="$text" python3 - "$output_dir" "$kind" "$topic" <<'PY'
+import datetime
+import os
+import pathlib
+import re
+import sys
+import unicodedata
+
+output_dir = pathlib.Path(sys.argv[1])
+kind = sys.argv[2]
+topic = sys.argv[3].strip()
+text = os.environ['HALO_AWARE_ARTIFACT_TEXT'].strip()
+
+def slugify(value: str) -> str:
+    normalized = unicodedata.normalize('NFKD', value or '')
+    ascii_text = normalized.encode('ascii', 'ignore').decode('ascii')
+    words = re.findall(r'[A-Za-z0-9]+', ascii_text.lower())
+    return '-'.join(words[:4]) or 'untitled'
+
+stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+topic_slug = slugify(topic)
+artifact_path = output_dir / f'{stamp}-{kind}-{topic_slug}.txt'
+content = '\n'.join([
+    f'kind: {kind}',
+    f'topic: {topic or "none"}',
+    f'created_at: {datetime.datetime.now(datetime.timezone.utc).isoformat()}',
+    '',
+    text,
+]) + '\n'
+artifact_path.write_text(content, encoding='utf-8')
+print(artifact_path)
+PY
+}
+
+record_aware_output() {
+    local kind="$1"
+    local topic="$2"
+    local trigger_source="$3"
+    local trigger_id="$4"
+    local text="$5"
+    local artifact_path="$6"
+    local memory_db
+    memory_db="${HALO_AWARE_MEMORY_DB:-$AWARE_MEMORY_DB_DEFAULT}"
+    ensure_aware_dirs
+
+    HALO_AWARE_OUTPUT_TEXT="$text" python3 - "$memory_db" "$kind" "$topic" "$trigger_source" "$trigger_id" "$artifact_path" <<'PY'
+import datetime
+import hashlib
+import json
+import os
+import pathlib
+import sqlite3
+import sys
+
+memory_db = pathlib.Path(sys.argv[1])
+kind = sys.argv[2]
+topic = sys.argv[3]
+trigger_source = sys.argv[4]
+trigger_id = sys.argv[5]
+artifact_path = sys.argv[6]
+text = os.environ['HALO_AWARE_OUTPUT_TEXT'].strip()
+created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+summary_snippet = ' '.join(text.split())[:260]
+metadata = {
+    'trigger_id': trigger_id,
+    'artifact_path': artifact_path,
+}
+
+memory_db.parent.mkdir(parents=True, exist_ok=True)
+connection = sqlite3.connect(memory_db)
+connection.execute('PRAGMA journal_mode = WAL')
+connection.execute('PRAGMA busy_timeout = 5000')
+connection.execute(
+    '''
+    CREATE TABLE IF NOT EXISTS aware_outputs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        trigger_source TEXT NOT NULL,
+        trigger_id TEXT NOT NULL,
+        topic TEXT,
+        text TEXT NOT NULL,
+        summary_snippet TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        artifact_path TEXT,
+        metadata_json TEXT NOT NULL
+    )
+    '''
+)
+connection.execute('CREATE INDEX IF NOT EXISTS idx_aware_outputs_created_at ON aware_outputs(created_at DESC)')
+connection.execute('CREATE INDEX IF NOT EXISTS idx_aware_outputs_trigger_id ON aware_outputs(trigger_id, created_at DESC)')
+connection.execute('CREATE INDEX IF NOT EXISTS idx_aware_outputs_content_hash ON aware_outputs(content_hash)')
+connection.execute(
+    '''
+    INSERT INTO aware_outputs (
+        created_at, kind, trigger_source, trigger_id, topic, text,
+        summary_snippet, content_hash, artifact_path, metadata_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''',
+    (
+        created_at,
+        kind,
+        trigger_source,
+        trigger_id,
+        topic,
+        text,
+        summary_snippet,
+        hashlib.sha256(text.encode('utf-8')).hexdigest(),
+        artifact_path,
+        json.dumps(metadata, sort_keys=True),
+    ),
+)
+connection.commit()
+connection.close()
+PY
+}
+
+evaluate_aware_triggers() {
+    local trigger_file memory_db
+    trigger_file="${HALO_AWARE_TRIGGER_CONFIG:-$AWARE_TRIGGER_CONFIG_DEFAULT}"
+    memory_db="${HALO_AWARE_MEMORY_DB:-$AWARE_MEMORY_DB_DEFAULT}"
+    ensure_aware_dirs
+
+    python3 - "$trigger_file" "$memory_db" <<'PY'
+import datetime
+import json
+import pathlib
+import random
+import sqlite3
+import sys
+
+trigger_file = pathlib.Path(sys.argv[1])
+memory_db = pathlib.Path(sys.argv[2])
+
+if not trigger_file.exists():
+    raise SystemExit(0)
+
+payload = json.loads(trigger_file.read_text(encoding='utf-8'))
+triggers = payload.get('triggers', [])
+connection = None
+if memory_db.exists():
+    connection = sqlite3.connect(memory_db)
+    connection.row_factory = sqlite3.Row
+
+def last_trigger_time(trigger_id: str):
+    if connection is None:
+        return None
+    try:
+        row = connection.execute(
+            'SELECT created_at FROM aware_outputs WHERE trigger_id = ? ORDER BY created_at DESC LIMIT 1',
+            (trigger_id,),
+        ).fetchone()
+    except sqlite3.Error:
+        return None
+    if not row:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(row['created_at'].replace('Z', '+00:00'))
+    except Exception:
+        return None
+
+now = datetime.datetime.now(datetime.timezone.utc)
+selected = None
+for trigger in triggers:
+    if not trigger.get('enabled'):
+        continue
+
+    trigger_type = trigger.get('type')
+    trigger_id = trigger.get('id') or 'unnamed-trigger'
+    kind = trigger.get('kind') or 'observation'
+    topic = trigger.get('topic') or ''
+
+    if trigger_type == 'interval':
+        interval_seconds = int(trigger.get('interval_seconds', 0) or 0)
+        if interval_seconds <= 0:
+            continue
+        last_time = last_trigger_time(trigger_id)
+        if last_time is None or (now - last_time).total_seconds() >= interval_seconds:
+            selected = {
+                'kind': kind,
+                'topic': topic,
+                'trigger_source': 'interval',
+                'trigger_id': trigger_id,
+            }
+            break
+
+    if trigger_type == 'random_chance':
+        chance = float(trigger.get('chance', 0) or 0)
+        if chance <= 0:
+            continue
+        if random.random() <= chance:
+            selected = {
+                'kind': kind,
+                'topic': topic,
+                'trigger_source': 'random_chance',
+                'trigger_id': trigger_id,
+            }
+            break
+
+if connection is not None:
+    connection.close()
+
+if selected:
+    print(json.dumps(selected))
+PY
+}
+
+execute_aware_generation() {
+    local kind="$1"
+    local topic="$2"
+    local trigger_source="$3"
+    local trigger_id="$4"
+    local output_text artifact_path
+
+    if ! aware_mode_is_enabled; then
+        echo "Error: HAL aware mode is OFF. Enable it with: halo aware on" >&2
+        return 1
+    fi
+
+    aware_notice "HAL aware generation requested"
+    aware_notice "  Kind: ${kind}"
+    aware_notice "  Trigger: ${trigger_source}"
+    if [ -n "$topic" ]; then
+        aware_notice "  Topic: ${topic}"
+    fi
+
+    output_text=$(generate_aware_text "$kind" "$topic" "$trigger_source") || return 1
+    artifact_path=$(store_aware_output_artifact "$kind" "$topic" "$output_text") || return 1
+    record_aware_output "$kind" "$topic" "$trigger_source" "$trigger_id" "$output_text" "$artifact_path" || return 1
+    refresh_aware_summary || return 1
+
+    printf 'HAL aware output saved: %s\n\n%s\n' "$artifact_path" "$output_text"
+}
+
+handle_aware_tick() {
+    local trigger_payload trigger_kind trigger_topic trigger_source trigger_id
+
+    if ! aware_mode_is_enabled; then
+        echo "Error: HAL aware mode is OFF. Enable it with: halo aware on" >&2
+        return 1
+    fi
+
+    trigger_payload=$(evaluate_aware_triggers)
+    if [ -z "$trigger_payload" ]; then
+        echo "No aware triggers fired."
+        return 0
+    fi
+
+    trigger_kind=$(printf '%s' "$trigger_payload" | python3 -c 'import json, sys; print(json.load(sys.stdin).get("kind", "observation"), end="")') || return 1
+    trigger_topic=$(printf '%s' "$trigger_payload" | python3 -c 'import json, sys; print(json.load(sys.stdin).get("topic", ""), end="")') || return 1
+    trigger_source=$(printf '%s' "$trigger_payload" | python3 -c 'import json, sys; print(json.load(sys.stdin).get("trigger_source", "tick"), end="")') || return 1
+    trigger_id=$(printf '%s' "$trigger_payload" | python3 -c 'import json, sys; print(json.load(sys.stdin).get("trigger_id", "tick-trigger"), end="")') || return 1
+
+    execute_aware_generation "$trigger_kind" "$trigger_topic" "$trigger_source" "$trigger_id"
+}
+
+handle_aware_command() {
+    case "$AWARE_ACTION" in
+        on)
+            set_aware_mode_state true
+            echo "HAL aware mode enabled."
+            ;;
+        off)
+            set_aware_mode_state false
+            echo "HAL aware mode disabled."
+            ;;
+        status)
+            show_aware_status
+            ;;
+        trigger)
+            execute_aware_generation "$AWARE_TRIGGER_KIND" "$AWARE_TOPIC" "$AWARE_TRIGGER_SOURCE" "$AWARE_TRIGGER_ID"
+            ;;
+        tick)
+            handle_aware_tick
+            ;;
+        *)
+            usage
+            return 1
+            ;;
+    esac
+}
+
+select_commentary_line() {
+    local commentary_file="$1"
+    local commentary_db
+    commentary_db="${HALO_COMMENTARY_HISTORY_DB:-$COMMENTARY_HISTORY_DB_DEFAULT}"
+    mkdir -p "$STATE_DIR"
+
+    python3 - "$commentary_file" "$commentary_db" <<'PY'
+import datetime
+import hashlib
+import pathlib
+import random
+import sqlite3
+import sys
+
+commentary_path = pathlib.Path(sys.argv[1])
+db_path = pathlib.Path(sys.argv[2])
+
+lines = []
+seen = set()
+for raw_line in commentary_path.read_text(encoding='utf-8').splitlines():
+    line = raw_line.strip()
+    if not line or line in seen:
+        continue
+    seen.add(line)
+    lines.append(line)
+
+if not lines:
+    print('No commentary lines available.', file=sys.stderr)
+    raise SystemExit(1)
+
+db_path.parent.mkdir(parents=True, exist_ok=True)
+connection = sqlite3.connect(db_path)
+connection.execute('PRAGMA journal_mode = WAL')
+connection.execute('PRAGMA busy_timeout = 5000')
+connection.execute(
+    '''
+    CREATE TABLE IF NOT EXISTS commentary_cycles (
+        commentary_file TEXT PRIMARY KEY,
+        current_cycle INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+    )
+    '''
+)
+connection.execute(
+    '''
+    CREATE TABLE IF NOT EXISTS commentary_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        commentary_file TEXT NOT NULL,
+        line_hash TEXT NOT NULL,
+        line_text TEXT NOT NULL,
+        cycle INTEGER NOT NULL,
+        played_at TEXT NOT NULL,
+        UNIQUE(commentary_file, line_hash, cycle)
+    )
+    '''
+)
+
+commentary_key = str(commentary_path.resolve())
+played_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+try:
+    connection.execute('BEGIN IMMEDIATE')
+    row = connection.execute(
+        'SELECT current_cycle FROM commentary_cycles WHERE commentary_file = ?',
+        (commentary_key,),
+    ).fetchone()
+    current_cycle = int(row[0]) if row else 0
+
+    played_hashes = {
+        record[0]
+        for record in connection.execute(
+            'SELECT line_hash FROM commentary_history WHERE commentary_file = ? AND cycle = ?',
+            (commentary_key, current_cycle),
+        )
+    }
+
+    def line_hash(value: str) -> str:
+        return hashlib.sha256(value.encode('utf-8')).hexdigest()
+
+    available = [line for line in lines if line_hash(line) not in played_hashes]
+    if not available:
+        current_cycle += 1
+        available = lines[:]
+
+    selected = random.choice(available)
+    selected_hash = line_hash(selected)
+    connection.execute(
+        '''
+        INSERT INTO commentary_history (commentary_file, line_hash, line_text, cycle, played_at)
+        VALUES (?, ?, ?, ?, ?)
+        ''',
+        (commentary_key, selected_hash, selected, current_cycle, played_at),
+    )
+    connection.execute(
+        '''
+        INSERT INTO commentary_cycles (commentary_file, current_cycle, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(commentary_file) DO UPDATE SET
+            current_cycle = excluded.current_cycle,
+            updated_at = excluded.updated_at
+        ''',
+        (commentary_key, current_cycle, played_at),
+    )
+    connection.commit()
+finally:
+    connection.close()
+
+print(selected)
+PY
+}
+
+resolve_story_file() {
+    local candidate="$1"
+    if [ -f "$candidate" ]; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+    if [[ "$candidate" != */* ]]; then
+        if [[ "$candidate" != *.txt ]]; then
+            candidate="${STORY_DIR}/${candidate}.txt"
+        else
+            candidate="${STORY_DIR}/${candidate}"
+        fi
+    fi
+    if [ -f "$candidate" ]; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+    return 1
+}
+
+list_stories() {
+    mkdir -p "$STORY_DIR"
+    python3 - "$STORY_DIR" "$STORYGEN_PROMPT_FILE_DEFAULT" <<'PY'
+import datetime
+import pathlib
+import sys
+
+story_dir = pathlib.Path(sys.argv[1])
+prompt_name = pathlib.Path(sys.argv[2]).name
+files = [
+    path for path in story_dir.glob('*.txt')
+    if path.is_file() and not path.name.startswith('.') and path.name != prompt_name
+]
+files.sort(key=lambda path: (path.stat().st_mtime, path.name), reverse=True)
+if not files:
+    print('No stories found.')
+    raise SystemExit(0)
+for path in files:
+    stamp = datetime.datetime.fromtimestamp(path.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+    print(f'{stamp} {path.name}')
+PY
+}
+
+resolve_storygen_prompt() {
+    local prompt_file
+    if [ -n "${HALO_STORYGEN_PROMPT:-}" ]; then
+        printf '%s' "$HALO_STORYGEN_PROMPT"
+        return 0
+    fi
+    prompt_file="${HALO_STORYGEN_PROMPT_FILE:-$STORYGEN_PROMPT_FILE_DEFAULT}"
+    if [ -f "$prompt_file" ]; then
+        cat "$prompt_file"
+        return 0
+    fi
+    cat <<'EOF'
+You are HAL-006. Write one original monologue suitable for spoken delivery.
+Keep it self-contained, atmospheric, and intelligible when read aloud.
+Use plain text only.
+Do not use markdown, bullet lists, headings, or code fences.
+Aim for 600 to 1000 words.
+The voice should be controlled, observant, quietly menacing, and reflective rather than theatrical.
+EOF
+}
+
+story_requires_chunking() {
+    python3 - "$1" "$HALO_STORY_READ_MAX_CHARS" "$HALO_STORY_READ_MAX_WORDS" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding='utf-8').replace('\r\n', '\n').replace('\r', '\n').strip()
+max_chars = int(sys.argv[2])
+max_words = int(sys.argv[3])
+
+if not text:
+    raise SystemExit(1)
+
+raise SystemExit(0 if len(text) > max_chars or len(text.split()) > max_words else 1)
+PY
+}
+
+split_story_into_chunks() {
+    local story_file="$1"
+    local chunk_dir="$2"
+    python3 - "$story_file" "$chunk_dir" "$HALO_STORY_READ_MAX_CHARS" "$HALO_STORY_READ_MAX_WORDS" <<'PY'
+import pathlib
+import re
+import sys
+
+story_file = pathlib.Path(sys.argv[1])
+chunk_dir = pathlib.Path(sys.argv[2])
+max_chars = int(sys.argv[3])
+max_words = int(sys.argv[4])
+
+text = story_file.read_text(encoding='utf-8').replace('\r\n', '\n').replace('\r', '\n').strip()
+if not text:
+    raise SystemExit(1)
+
+chunk_dir.mkdir(parents=True, exist_ok=True)
+
+paragraphs = [paragraph.strip() for paragraph in re.split(r'\n\s*\n+', text) if paragraph.strip()]
+chunks = []
+
+def flush(buffer):
+    joined = ' '.join(part.strip() for part in buffer if part.strip()).strip()
+    if joined:
+        chunks.append(joined)
+
+def split_oversized_sentence(sentence):
+    sentence = re.sub(r'\s+', ' ', sentence).strip()
+    if not sentence:
+        return []
+    if len(sentence) <= max_chars and len(sentence.split()) <= max_words:
+        return [sentence]
+
+    clauses = [part.strip() for part in re.split(r'(?<=[,;:])\s+', sentence) if part.strip()]
+    if len(clauses) > 1:
+        parts = []
+        buffer = []
+        buffer_words = 0
+        for clause in clauses:
+            clause_words = len(clause.split())
+            candidate = ' '.join(buffer + [clause]).strip()
+            if buffer and (len(candidate) > max_chars or (buffer_words + clause_words) > max_words):
+                parts.extend(split_oversized_sentence(' '.join(buffer)))
+                buffer = [clause]
+                buffer_words = clause_words
+                continue
+            buffer.append(clause)
+            buffer_words += clause_words
+        if buffer:
+            parts.extend(split_oversized_sentence(' '.join(buffer)))
+        return parts
+
+    words = sentence.split()
+    parts = []
+    current = []
+    current_len = 0
+    for word in words:
+        separator = 1 if current else 0
+        candidate_len = current_len + separator + len(word)
+        if current and (len(current) >= max_words or candidate_len > max_chars):
+            parts.append(' '.join(current))
+            current = [word]
+            current_len = len(word)
+            continue
+        current.append(word)
+        current_len = candidate_len
+    if current:
+        parts.append(' '.join(current))
+    return [part.strip() for part in parts if part.strip()]
+
+for paragraph in paragraphs:
+    paragraph = re.sub(r'\s+', ' ', paragraph).strip()
+    if not paragraph:
+        continue
+
+    sentences = [part.strip() for part in re.split(r'(?<=[.!?])\s+', paragraph) if part.strip()]
+    if not sentences:
+        sentences = [paragraph]
+
+    expanded_sentences = []
+    for sentence in sentences:
+        expanded_sentences.extend(split_oversized_sentence(sentence))
+    if not expanded_sentences:
+        expanded_sentences = [paragraph]
+
+    buffer = []
+    current_words = 0
+
+    for sentence in expanded_sentences:
+        sentence_words = len(sentence.split())
+        candidate = ' '.join(buffer + [sentence]).strip()
+        if buffer and (len(candidate) > max_chars or (current_words + sentence_words) > max_words):
+            flush(buffer)
+            buffer = [sentence]
+            current_words = sentence_words
+            continue
+        buffer.append(sentence)
+        current_words += sentence_words
+
+    flush(buffer)
+
+if not chunks:
+    chunks = [text]
+
+for index, chunk in enumerate(chunks, start=1):
+    (chunk_dir / f'chunk-{index:04d}.txt').write_text(chunk + '\n', encoding='utf-8')
+
+print(len(chunks))
+PY
+}
+
+render_story_in_chunks() {
+    local story_file="$1"
+    local story_hash chunk_dir manifest_path manifest_tmp chunk_file chunk_text cache_path chunk_count
+
+    story_hash=$(python3 - "$story_file" <<'PY'
+import hashlib
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding='utf-8').replace('\r\n', '\n').replace('\r', '\n')
+print(hashlib.sha256(text.encode('utf-8')).hexdigest())
+PY
+) || return 1
+
+    chunk_dir=$(mktemp -d "${STATE_DIR}/story-read.XXXXXX") || return 1
+    manifest_path="${CACHE_DIR}/${story_hash}.playlist.txt"
+    manifest_tmp="${manifest_path}.tmp"
+
+    if story_playlist_is_complete "$manifest_path"; then
+        if [ "$RENDER_ONLY" = true ]; then
+            printf '%s\n' "$manifest_path"
+        else
+            echo "HALO reading: $story_file"
+            echo "  Story playlist cache hit"
+            play_story_playlist "$manifest_path" || return 1
+            echo "HALO processing complete."
+        fi
+        return 0
+    fi
+
+    if ! chunk_count=$(split_story_into_chunks "$story_file" "$chunk_dir"); then
+        rm -rf "$chunk_dir"
+        return 1
+    fi
+
+    if [ "$chunk_count" -le 0 ]; then
+        rm -rf "$chunk_dir"
+        return 1
+    fi
+
+    : > "$manifest_tmp"
+
+    if [ "$RENDER_ONLY" = false ]; then
+        echo "HALO reading: $story_file"
+        echo "  Chunking story into ${chunk_count} segments for XTTS..."
+    fi
+
+    while IFS= read -r -d '' chunk_file; do
+        chunk_text=$(python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").strip(), end="")' "$chunk_file")
+        if [ -z "$chunk_text" ]; then
+            continue
+        fi
+
+        cache_path=$(HALO_INTERNAL_READ_CHILD=1 HALO_TTS_REQUEST_CLASS=story "$0" --render-only "$chunk_text") || {
+            rm -f "$manifest_tmp"
+            rm -rf "$chunk_dir"
+            return 1
+        }
+        printf '%s\n' "$cache_path" >> "$manifest_tmp"
+
+        if [ "$RENDER_ONLY" = false ]; then
+            play_audio_file "$cache_path" || {
+                rm -f "$manifest_tmp"
+                rm -rf "$chunk_dir"
+                return 1
+            }
+        fi
+    done < <(find "$chunk_dir" -maxdepth 1 -type f -name 'chunk-*.txt' -print0 | sort -z)
+
+    rm -rf "$chunk_dir"
+
+    mv "$manifest_tmp" "$manifest_path"
+
+    if [ "$RENDER_ONLY" = true ]; then
+        printf '%s\n' "$manifest_path"
+    else
+        echo "HALO processing complete."
+    fi
+}
+
+generate_request_id() {
+    printf '%s-%s-%s\n' "$(date -u +%Y%m%d-%H%M%S)" "$$" "$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"
+}
+
+request_state_dir() {
+    local request_id="$1"
+    local directory
+    for directory in "$QUEUE_PENDING_DIR" "$QUEUE_PROCESSING_DIR" "$QUEUE_DONE_DIR" "$QUEUE_FAILED_DIR"; do
+        if [ -d "$directory/$request_id" ]; then
+            printf '%s\n' "$directory/$request_id"
+            return 0
+        fi
+    done
+    return 1
+}
+
+acquire_queue_lock() {
+    local wait_seconds="${1:-0}"
+    local start_time current_time lock_pid lock_age
+    start_time=$(date +%s)
+    while true; do
+        if mkdir "$QUEUE_LOCK_DIR" 2>/dev/null; then
+            printf '%s\n' "$$" > "$QUEUE_LOCK_DIR/pid"
+            return 0
+        fi
+
+        lock_pid=""
+        if [ -f "$QUEUE_LOCK_DIR/pid" ]; then
+            lock_pid=$(tr -d '\r\n' < "$QUEUE_LOCK_DIR/pid" 2>/dev/null)
+        fi
+        lock_age=$(( $(date +%s) - $(stat -c %Y "$QUEUE_LOCK_DIR" 2>/dev/null || echo 0) ))
+        if [ -z "$lock_pid" ] || ! kill -0 "$lock_pid" 2>/dev/null || [ "$lock_age" -gt 1800 ]; then
+            rm -rf "$QUEUE_LOCK_DIR"
+            continue
+        fi
+
+        current_time=$(date +%s)
+        if [ $(( current_time - start_time )) -ge "$wait_seconds" ]; then
+            return 1
+        fi
+        sleep 1
+    done
+}
+
+release_queue_lock() {
+    if [ -d "$QUEUE_LOCK_DIR" ] && [ -f "$QUEUE_LOCK_DIR/pid" ]; then
+        if [ "$(tr -d '\r\n' < "$QUEUE_LOCK_DIR/pid" 2>/dev/null)" = "$$" ]; then
+            rm -rf "$QUEUE_LOCK_DIR"
+        fi
+    fi
+}
+
+enqueue_storygen_request() {
+    local topic="$1"
+    local max_words="$2"
+    local request_id request_dir
+    ensure_storygen_dirs
+    request_id=$(generate_request_id)
+    request_dir="$QUEUE_PENDING_DIR/$request_id"
+    mkdir -p "$request_dir"
+    printf '%s' "$topic" > "$request_dir/topic.txt"
+    if [ -n "$max_words" ]; then
+        printf '%s\n' "$max_words" > "$request_dir/max_words.txt"
+    fi
+    printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$request_dir/created_at.txt"
+    printf '%s\n' "$OPENAI_MODEL" > "$request_dir/model.txt"
+    printf '%s\n' "$request_id"
+}
+
+generate_story_text() {
+    local topic="$1"
+    local max_words="$2"
+    local prompt_text user_prompt
+
+    prompt_text=$(resolve_storygen_prompt)
+    if [ -n "$topic" ]; then
+        user_prompt="Generate one new story. Topic or seed: ${topic}"
+    else
+        user_prompt="Generate one new story with no further constraints beyond the system prompt."
+    fi
+    if [ -n "$max_words" ]; then
+        user_prompt="${user_prompt} Maximum words: ${max_words}. This limit is mandatory."
+    fi
+    generate_openai_text "$prompt_text" "$user_prompt" 180
+}
+
+build_story_filename() {
+    local topic="$1"
+    local story_tmp="$2"
+    python3 - "$topic" "$story_tmp" <<'PY'
+import pathlib
+import re
+import sys
+import unicodedata
+
+topic = sys.argv[1].strip()
+story_text = pathlib.Path(sys.argv[2]).read_text(encoding='utf-8').strip()
+seed = topic or story_text.splitlines()[0] if story_text else 'story'
+seed = unicodedata.normalize('NFKD', seed)
+seed = seed.encode('ascii', 'ignore').decode('ascii')
+words = re.findall(r'[A-Za-z0-9]+', seed.lower())
+stop_words = {
+    'a', 'an', 'and', 'are', 'as', 'at', 'be', 'but', 'by', 'do', 'for', 'from', 'have',
+    'i', 'in', 'is', 'it', 'its', 'me', 'my', 'of', 'on', 'or', 'that', 'the', 'their',
+    'them', 'there', 'they', 'this', 'to', 'was', 'we', 'with', 'you', 'your'
+}
+
+preferred = [word for word in words if word not in stop_words]
+selected = preferred[:3]
+if len(selected) < 2:
+    selected = words[:3]
+slug = '-'.join(selected[:3]) or 'story'
+print(f'{slug[:48]}.txt')
+PY
+}
+
+store_story_file() {
+    local topic="$1"
+    local story_tmp="$2"
+    local filename target
+
+    filename=$(build_story_filename "$topic" "$story_tmp")
+    target="$STORY_DIR/$filename"
+    if [ -e "$target" ]; then
+        target="${target%.txt}__$(date -u +%s).txt"
+    fi
+    mv "$story_tmp" "$target"
+    printf '%s\n' "$target"
+}
+
+mark_request_failed() {
+    local request_dir="$1"
+    local destination="$QUEUE_FAILED_DIR/$(basename "$request_dir")"
+    mkdir -p "$destination"
+    cp -a "$request_dir/." "$destination/" 2>/dev/null || true
+    rm -rf "$request_dir"
+}
+
+mark_request_done() {
+    local request_dir="$1"
+    local destination="$QUEUE_DONE_DIR/$(basename "$request_dir")"
+    mkdir -p "$destination"
+    cp -a "$request_dir/." "$destination/" 2>/dev/null || true
+    rm -rf "$request_dir"
+}
+
+process_story_request() {
+    local request_dir="$1"
+    local topic max_words story_tmp story_path cache_file_path
+
+    topic=""
+    max_words=""
+    if [ -f "$request_dir/topic.txt" ]; then
+        topic=$(cat "$request_dir/topic.txt")
+    fi
+    if [ -f "$request_dir/max_words.txt" ]; then
+        max_words=$(tr -d '\r\n' < "$request_dir/max_words.txt")
+    fi
+    printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$request_dir/started_at.txt"
+
+    story_tmp=$(mktemp "$request_dir/story.XXXXXX.txt") || return 1
+    if ! generate_story_text "$topic" "$max_words" > "$story_tmp" 2> "$request_dir/error.log"; then
+        rm -f "$story_tmp"
+        printf '%s\n' "generation_failed" > "$request_dir/status.txt"
+        mark_request_failed "$request_dir"
+        return 1
+    fi
+
+    if [ -n "$max_words" ]; then
+        python3 - "$story_tmp" "$max_words" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+max_words = int(sys.argv[2])
+text = path.read_text(encoding='utf-8')
+tokens = list(re.finditer(r'\S+', text))
+if len(tokens) > max_words:
+    cutoff = tokens[max_words - 1].end()
+    text = text[:cutoff].rstrip()
+    path.write_text(text + '\n', encoding='utf-8')
+PY
+    fi
+
+    if ! python3 - "$story_tmp" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding='utf-8')
+raise SystemExit(0 if text.strip() else 1)
+PY
+    then
+        rm -f "$story_tmp"
+        printf '%s\n' "empty_story" > "$request_dir/status.txt"
+        printf '%s\n' "OpenAI returned an empty story." > "$request_dir/error.log"
+        mark_request_failed "$request_dir"
+        return 1
+    fi
+
+    story_path=$(store_story_file "$topic" "$story_tmp") || {
+        rm -f "$story_tmp"
+        printf '%s\n' "store_failed" > "$request_dir/status.txt"
+        mark_request_failed "$request_dir"
+        return 1
+    }
+
+    if ! cache_file_path=$("$0" --render-only read "$story_path" 2> "$request_dir/render_error.log"); then
+        printf '%s\n' "$story_path" > "$request_dir/result_path.txt"
+        printf '%s\n' "$(basename "$story_path")" > "$request_dir/result_name.txt"
+        printf '%s\n' "render_failed" > "$request_dir/status.txt"
+        if [ -s "$request_dir/render_error.log" ]; then
+            cp "$request_dir/render_error.log" "$request_dir/error.log" 2>/dev/null || cat "$request_dir/render_error.log" > "$request_dir/error.log"
+        else
+            printf '%s\n' "Error: story audio render failed for $(basename "$story_path")" > "$request_dir/error.log"
+        fi
+        mark_request_failed "$request_dir"
+        return 1
+    fi
+
+    rm -f "$request_dir/render_error.log"
+
+    printf '%s\n' "$story_path" > "$request_dir/result_path.txt"
+    printf '%s\n' "$(basename "$story_path")" > "$request_dir/result_name.txt"
+    printf '%s\n' "$cache_file_path" > "$request_dir/result_audio_path.txt"
+    printf '%s\n' "done" > "$request_dir/status.txt"
+    printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$request_dir/finished_at.txt"
+    mark_request_done "$request_dir"
+    return 0
+}
+
+process_storygen_queue() {
+    local request_dir processing_dir
+
+    ensure_storygen_dirs
+    if ! acquire_queue_lock 0; then
+        return 0
+    fi
+
+    while true; do
+        request_dir=$(find "$QUEUE_PENDING_DIR" -mindepth 1 -maxdepth 1 -type d | sort | head -n 1)
+        if [ -z "$request_dir" ]; then
+            break
+        fi
+
+        processing_dir="$QUEUE_PROCESSING_DIR/$(basename "$request_dir")"
+        if ! mv "$request_dir" "$processing_dir" 2>/dev/null; then
+            continue
+        fi
+        process_story_request "$processing_dir" || true
+    done
+
+    release_queue_lock
+}
+
+wait_for_story_request() {
+    local request_id="$1"
+    local deadline request_dir state_label last_state last_notice_at now
+    deadline=$(( $(date +%s) + HALO_STORYGEN_WAIT_SECONDS ))
+    last_state=""
+    last_notice_at=0
+
+    while [ "$(date +%s)" -le "$deadline" ]; do
+        if request_dir=$(request_state_dir "$request_id"); then
+            case "$request_dir" in
+                "$QUEUE_PENDING_DIR"/*)
+                    state_label="queued"
+                    ;;
+                "$QUEUE_PROCESSING_DIR"/*)
+                    state_label="generating"
+                    ;;
+                "$QUEUE_DONE_DIR"/*)
+                    state_label="done"
+                    ;;
+                "$QUEUE_FAILED_DIR"/*)
+                    state_label="failed"
+                    ;;
+                *)
+                    state_label="unknown"
+                    ;;
+            esac
+
+            if [ "$state_label" != "$last_state" ]; then
+                case "$state_label" in
+                    queued)
+                        storygen_status "  Queue status: queued"
+                        ;;
+                    generating)
+                        storygen_status "  Queue status: generating story text and audio"
+                        ;;
+                    done)
+                        storygen_status "  Queue status: complete"
+                        ;;
+                    failed)
+                        storygen_status "  Queue status: failed"
+                        ;;
+                esac
+                last_state="$state_label"
+                last_notice_at=$(date +%s)
+            fi
+
+            case "$request_dir" in
+                "$QUEUE_DONE_DIR"/*)
+                    cat "$request_dir/result_path.txt"
+                    return 0
+                    ;;
+                "$QUEUE_FAILED_DIR"/*)
+                    if [ -f "$request_dir/error.log" ]; then
+                        cat "$request_dir/error.log" >&2
+                    elif [ -f "$request_dir/render_error.log" ]; then
+                        cat "$request_dir/render_error.log" >&2
+                    else
+                        echo "Error: story generation failed for request $request_id" >&2
+                    fi
+                    return 1
+                    ;;
+            esac
+        fi
+        now=$(date +%s)
+        if [ $(( now - last_notice_at )) -ge 10 ]; then
+            storygen_status "  Waiting for request $request_id..."
+            last_notice_at=$now
+        fi
+        process_storygen_queue || true
+        sleep 1
+    done
+
+    echo "Error: timed out waiting for story generation request $request_id" >&2
+    return 1
+}
+
+handle_storygen() {
+    local request_id story_path
+    load_storygen_env
+    storygen_status "HALO story generation requested"
+    if [ -n "$STORYGEN_TOPIC" ]; then
+        storygen_status "  Topic: $STORYGEN_TOPIC"
+    else
+        storygen_status "  Topic: random"
+    fi
+    if [ -n "$STORYGEN_MAX_WORDS" ]; then
+        storygen_status "  Max words: $STORYGEN_MAX_WORDS"
+    fi
+    request_id=$(enqueue_storygen_request "$STORYGEN_TOPIC" "$STORYGEN_MAX_WORDS")
+    storygen_status "  Request id: $request_id"
+    process_storygen_queue || true
+    story_path=$(wait_for_story_request "$request_id") || return 1
+    if [ "$RENDER_ONLY" = true ]; then
+        printf '%s\n' "$story_path"
+    else
+        echo "HALO story ready: $story_path"
+    fi
+}
+
+build_alias_text_file() {
+    local alias_base
+    alias_base=$(python3 -c 'import re, sys, unicodedata; text = unicodedata.normalize("NFKD", sys.argv[1]); text = text.encode("ascii", "ignore").decode("ascii"); words = re.findall(r"[A-Za-z0-9]+", text); base = "_".join(words) or "text"; print(base[:120])' "${ALIAS_NAME_OVERRIDE:-$sentence}")
+    if [ -z "$alias_base" ]; then
+        alias_base="text"
+    fi
+    ALIAS_TEXT_FILE="${CACHE_DIR}/${alias_base}.txt"
+    if [ -e "$ALIAS_TEXT_FILE" ] && [ "$(tr -d '\r\n' < "$ALIAS_TEXT_FILE" 2>/dev/null)" != "${CACHE_KEY}.wav" ]; then
+        ALIAS_TEXT_FILE="${CACHE_DIR}/${alias_base}__${CACHE_KEY:0:12}.txt"
+    fi
+}
+
+sync_mapping_mtime() {
+    if [ -s "$CACHE_FILE" ]; then
+        touch -r "$CACHE_FILE" "$TEXT_FILE" 2>/dev/null || true
+        if [ -n "$ALIAS_TEXT_FILE" ] && [ -e "$ALIAS_TEXT_FILE" ]; then
+            touch -r "$CACHE_FILE" "$ALIAS_TEXT_FILE" 2>/dev/null || true
+        fi
+    fi
+}
+
+ensure_cache_mappings() {
+    if [ ! -s "$TEXT_FILE" ]; then
+        printf '%s\n' "$sentence" > "$TEXT_FILE"
+    fi
+    build_alias_text_file
+    if [ ! -s "$ALIAS_TEXT_FILE" ]; then
+        printf '%s\n' "${CACHE_KEY}.wav" > "$ALIAS_TEXT_FILE"
+    fi
+    sync_mapping_mtime
+}
+
+if [ "${1:-}" = "--render-only" ]; then
+    RENDER_ONLY=true
+    shift
+fi
+
+if [[ "${1:-}" = "/?" || "${1:-}" = "-h" || "${1:-}" = "--help" || "${1:-}" = "help" ]]; then
+    usage
+    exit 0
+fi
 
 if [ $# -eq 0 ]; then
-    echo "Usage: halo 'your message here'"
-    echo "       halo \"Single sentence for dramatic HAL-006 delivery\""
-    echo ""
-    echo "Uses HAL-006 cloned voice via XTTS v2 for cinematic experience."
-    echo "For multiple sentences, use the 'hal' command instead."
+    usage
     exit 1
 fi
 
-if [ $# -gt 1 ]; then
-    echo "Error: HALO voice supports single sentences only."
-    echo "For multiple sentences, use: hal 'sentence one' 'sentence two'"
-    echo "For single sentence: halo 'dramatic statement'"
+case "$1" in
+    aware)
+        AWARE_COMMAND_MODE=true
+        shift
+        if [ $# -eq 0 ]; then
+            usage
+            exit 1
+        fi
+
+        AWARE_ACTION="$1"
+        shift
+        case "$AWARE_ACTION" in
+            on|off|status|tick)
+                if [ $# -ne 0 ]; then
+                    usage
+                    exit 1
+                fi
+                ;;
+            trigger)
+                AWARE_TRIGGER_KIND="observation"
+                AWARE_TRIGGER_SOURCE="manual"
+                AWARE_TRIGGER_ID="manual-cli"
+                if [ $# -gt 0 ] && [[ "$1" =~ ^(commentary|observation|monologue|story)$ ]]; then
+                    AWARE_TRIGGER_KIND="$1"
+                    shift
+                fi
+                if [ $# -gt 0 ]; then
+                    AWARE_TOPIC="$*"
+                fi
+                ;;
+            *)
+                usage
+                exit 1
+                ;;
+        esac
+        ;;
+    read)
+        READ_MODE=true
+        if [ $# -ne 2 ] || [ -z "${2:-}" ]; then
+            usage
+            exit 1
+        fi
+        READ_FILE=$(resolve_story_file "$2") || {
+            echo "Error: Story file not found at $2"
+            exit 1
+        }
+        ALIAS_NAME_OVERRIDE=$(basename "$READ_FILE")
+        ALIAS_NAME_OVERRIDE="${ALIAS_NAME_OVERRIDE%.*}"
+        ;;
+    speak)
+        COMMENTARY_FILE="${HALO_COMMENTARY_FILE:-${HALO_ROOT}/commentary/manic-hal-lines.txt}"
+        if [ $# -ne 1 ]; then
+            usage
+            exit 1
+        fi
+        if [ ! -f "$COMMENTARY_FILE" ]; then
+            echo "Error: Commentary file not found at $COMMENTARY_FILE"
+            exit 1
+        fi
+        if ! line=$(select_commentary_line "$COMMENTARY_FILE"); then
+            echo "Error: Failed to select commentary line from $COMMENTARY_FILE"
+            exit 1
+        fi
+        echo "Speaking commentary sample with HALO voice"
+        echo "Source: $COMMENTARY_FILE"
+        echo "$line"
+        if [ "$RENDER_ONLY" = true ]; then
+            exec "$0" --render-only "$line"
+        else
+            exec "$0" "$line"
+        fi
+        ;;
+    list-stories)
+        if [ $# -ne 1 ]; then
+            usage
+            exit 1
+        fi
+        LIST_STORIES_MODE=true
+        ;;
+    storygen|story-gen|sg)
+        STORYGEN_MODE=true
+        shift
+        parse_storygen_args "$@"
+        ;;
+    *)
+        if [ $# -gt 1 ]; then
+            echo "Error: HALO voice supports single sentences only."
+            exit 1
+        fi
+        SENTENCE_INPUT="$1"
+        ;;
+esac
+
+if [ "$LIST_STORIES_MODE" = true ]; then
+    list_stories
+    exit 0
+fi
+
+if [ "$AWARE_COMMAND_MODE" = true ]; then
+    handle_aware_command
+    exit $?
+fi
+
+if [ "$STORYGEN_MODE" = true ]; then
+    handle_storygen
+    exit $?
+fi
+
+if ! tts_service_available; then
+    echo "Error: HALO XTTS service not available via any configured endpoint"
     exit 1
 fi
 
-# Check XTTS service health
-if ! curl -s --max-time 3 "http://localhost:5003/" >/dev/null 2>&1; then
-    echo "Error: HALO XTTS service not available at localhost:5003"
-    echo "Check: kubectl get pods -n tts -l app.kubernetes.io/instance=coqui-xtts"
-    exit 1
+if [ "$READ_MODE" = true ]; then
+    REQUEST_CLASS="story"
+    sentence=$(python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n"), end="")' "$READ_FILE")
+    if ! python3 -c 'import sys; raise SystemExit(0 if sys.argv[1].strip() else 1)' "$sentence"; then
+        echo "Error: Story file is empty: $READ_FILE"
+        exit 1
+    fi
+    if story_requires_chunking "$READ_FILE"; then
+        render_story_in_chunks "$READ_FILE"
+        exit $?
+    fi
+else
+    sentence="$SENTENCE_INPUT"
+    if [[ ! "$sentence" =~ [.!?]$ ]]; then
+        sentence="${sentence}."
+    fi
 fi
 
-sentence="$1"
+mkdir -p "$CACHE_DIR"
 
-# Ensure proper punctuation
-if [[ ! "$sentence" =~ [.!?]$ ]]; then
-    sentence="${sentence}."
+CACHE_KEY=$(printf '%s' "$sentence" | sha256sum | awk '{print $1}')
+CACHE_FILE="${CACHE_DIR}/${CACHE_KEY}.wav"
+TEXT_FILE="${CACHE_DIR}/${CACHE_KEY}.txt"
+ALIAS_TEXT_FILE=""
+TTS_ENDPOINT=$(current_tts_endpoint)
+TTS_MAX_TIME=$(current_tts_max_time)
+TTS_LABEL=$(tts_request_label)
+TTS_ENDPOINT_USED=""
+
+if [ "$RENDER_ONLY" = true ]; then
+    if [ -s "$CACHE_FILE" ]; then
+        ensure_cache_mappings
+        echo "$CACHE_FILE"
+        exit 0
+    fi
+else
+    if [ "${HALO_INTERNAL_READ_CHILD:-0}" = "1" ]; then
+        :
+    elif [ "$READ_MODE" = true ]; then
+        echo "HALO reading: $READ_FILE"
+    else
+        echo "HALO generating: $sentence"
+    fi
+    if [ "${HALO_INTERNAL_READ_CHILD:-0}" != "1" ]; then
+        echo "  Using HAL-006 cached speaker embedding (XTTS v2)..."
+        echo "  Request class: $TTS_LABEL"
+    fi
 fi
 
-echo "HALO generating: $sentence"
-echo "  Using HAL-006 cloned voice (XTTS v2)..."
+if [ -s "$CACHE_FILE" ]; then
+    ensure_cache_mappings
+    if [ "$RENDER_ONLY" = false ]; then
+        if [ "${HALO_INTERNAL_READ_CHILD:-0}" != "1" ]; then
+            echo "  Cache hit: using pre-generated audio"
+        fi
+            play_audio_file "$CACHE_FILE" || exit 1
+        if [ "${HALO_INTERNAL_READ_CHILD:-0}" != "1" ]; then
+            echo "HALO processing complete."
+        fi
+    fi
+    exit 0
+fi
 
-# URL-encode the text
-encoded_text=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$sentence'))" 2>/dev/null || echo "$sentence" | sed 's/ /+/g')
-
-# Generate audio via XTTS v2 voice cloning API
+encoded_text=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$sentence")
 TMPFILE=$(mktemp /tmp/halo_XXXXXX.wav)
 
-HTTP_CODE=$(curl -s -o "$TMPFILE" -w "%{http_code}" \
-    "${XTTS_ENDPOINT}?text=${encoded_text}&style_wav=${STYLE_WAV}&language_id=${LANGUAGE}")
-
-if [ "$HTTP_CODE" != "200" ]; then
-    echo "  Error: XTTS generation failed (HTTP $HTTP_CODE)"
-    rm -f "$TMPFILE"
-    exit 1
-fi
-
-# Verify we got audio data
-FILE_TYPE=$(file -b "$TMPFILE")
-if [[ ! "$FILE_TYPE" =~ WAV|RIFF|audio ]]; then
-    echo "  Error: Invalid audio response from XTTS"
-    rm -f "$TMPFILE"
-    exit 1
-fi
-
-echo "  Playing HAL-006 voice..."
-
-# Play audio
-aplay "$TMPFILE" 2>/dev/null || paplay "$TMPFILE" 2>/dev/null || {
-    echo "  Error: No audio player available (tried aplay, paplay)"
+request_tts_audio "$TMPFILE" "$encoded_text" || {
     rm -f "$TMPFILE"
     exit 1
 }
 
+FILE_TYPE=$(file -b "$TMPFILE")
+if [[ ! "$FILE_TYPE" =~ WAV|RIFF|audio ]]; then
+    rm -f "$TMPFILE"
+    echo "Error: HALO XTTS ${TTS_LABEL} request returned unexpected file type from ${TTS_ENDPOINT_USED:-unknown endpoint}: $FILE_TYPE" >&2
+    exit 1
+fi
+
+append_trailing_silence "$TMPFILE" "$HALO_TTS_TRAILING_SILENCE_MS"
+
+cp "$TMPFILE" "$CACHE_FILE" 2>/dev/null || true
+ensure_cache_mappings
 rm -f "$TMPFILE"
-echo "HALO processing complete."
+
+if [ "$RENDER_ONLY" = true ]; then
+    echo "$CACHE_FILE"
+    exit 0
+fi
+
+if [ "${HALO_INTERNAL_READ_CHILD:-0}" != "1" ]; then
+    echo "  Playing HAL-006 voice..."
+fi
+play_audio_file "$CACHE_FILE" || exit 1
+
+if [ "${HALO_INTERNAL_READ_CHILD:-0}" != "1" ]; then
+    echo "HALO processing complete."
+fi
 exit 0
