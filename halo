@@ -2,10 +2,13 @@
 
 HALO_SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" && pwd)
 
-XTTS_ENDPOINT_INSTANT="${HALO_TTS_ENDPOINT_INSTANT:-http://localhost:5003/api/tts}"
-XTTS_ENDPOINT_STORY="${HALO_TTS_ENDPOINT_STORY:-${HALO_TTS_ENDPOINT_BATCH:-http://localhost:5004/api/tts}}"
-XTTS_ENDPOINT_INSTANT_FALLBACK="${HALO_TTS_ENDPOINT_INSTANT_FALLBACK:-http://localhost:5003/api/tts}"
-XTTS_ENDPOINT_STORY_FALLBACK="${HALO_TTS_ENDPOINT_STORY_FALLBACK:-http://localhost:5004/api/tts}"
+HALO_TTS_PRIMARY_HOST="${HALO_TTS_PRIMARY_HOST:-192.168.1.165}"
+XTTS_ENDPOINT_INSTANT="${HALO_TTS_ENDPOINT_INSTANT:-http://${HALO_TTS_PRIMARY_HOST}:5003/api/tts}"
+XTTS_ENDPOINT_STORY="${HALO_TTS_ENDPOINT_STORY:-${HALO_TTS_ENDPOINT_BATCH:-http://${HALO_TTS_PRIMARY_HOST}:5004/api/tts}}"
+XTTS_ENDPOINT_INSTANT_FALLBACK="${HALO_TTS_ENDPOINT_INSTANT_FALLBACK:-http://127.0.0.1:5003/api/tts}"
+XTTS_ENDPOINT_STORY_FALLBACK="${HALO_TTS_ENDPOINT_STORY_FALLBACK:-http://127.0.0.1:5003/api/tts}"
+HALO_TTS_PRIMARY_ROUTE_LABEL="${HALO_TTS_PRIMARY_ROUTE_LABEL:-Archos}"
+HALO_TTS_FALLBACK_ROUTE_LABEL="${HALO_TTS_FALLBACK_ROUTE_LABEL:-Falcon}"
 SPEAKER_ID="HAL-006"
 LANGUAGE="en"
 HALO_ROOT="${HALO_ROOT:-/mnt/dkstorage/hal-system-monitor}"
@@ -38,6 +41,18 @@ HALO_TTS_CONNECT_TIMEOUT="${HALO_TTS_CONNECT_TIMEOUT:-3}"
 HALO_TTS_MAX_TIME_INSTANT="${HALO_TTS_MAX_TIME_INSTANT:-120}"
 HALO_TTS_MAX_TIME_STORY="${HALO_TTS_MAX_TIME_STORY:-180}"
 HALO_TTS_TRAILING_SILENCE_MS="${HALO_TTS_TRAILING_SILENCE_MS:-450}"
+HALO_TTS_CACHE_FORMAT_VERSION="${HALO_TTS_CACHE_FORMAT_VERSION:-2}"
+HALO_PLAYBACK_MODE="${HALO_PLAYBACK_MODE:-queue}"
+HALO_PLAYBACK_QUEUE_ENDPOINT="${HALO_PLAYBACK_QUEUE_ENDPOINT:-http://127.0.0.1:18080/api/tts/play}"
+HALO_PLAYBACK_QUEUE_CONNECT_TIMEOUT="${HALO_PLAYBACK_QUEUE_CONNECT_TIMEOUT:-2}"
+HALO_PLAYBACK_QUEUE_MAX_TIME="${HALO_PLAYBACK_QUEUE_MAX_TIME:-10}"
+HALO_DOTMATRIX_ENABLED="${HALO_DOTMATRIX_ENABLED:-0}"
+HALO_DOTMATRIX_QUEUE_DIR="${HALO_DOTMATRIX_QUEUE_DIR:-/tmp/halo-dotmatrix/queue}"
+HALO_DOTMATRIX_TRIGGER_COMMAND="${HALO_DOTMATRIX_TRIGGER_COMMAND:-halo-dotmatrix}"
+HALO_DOTMATRIX_VENV_TRIGGER_COMMAND="${HALO_DOTMATRIX_VENV_TRIGGER_COMMAND:-$HOME/dev/python3-idotmatrix-library/.venv/bin/halo-dotmatrix}"
+LATENCY_STATE_FILE_DEFAULT="${STATE_DIR}/latency-metrics.json"
+HALO_LATENCY_HISTORY_LIMIT="${HALO_LATENCY_HISTORY_LIMIT:-24}"
+HALO_CLIENT_STARTED_AT_MS="${HALO_CLIENT_STARTED_AT_MS:-}"
 HALO_AWARE_RECENT_HISTORY_LIMIT="${HALO_AWARE_RECENT_HISTORY_LIMIT:-6}"
 HALO_AWARE_RELEVANT_HISTORY_LIMIT="${HALO_AWARE_RELEVANT_HISTORY_LIMIT:-3}"
 HALO_AWARE_SUMMARY_ENTRY_LIMIT="${HALO_AWARE_SUMMARY_ENTRY_LIMIT:-12}"
@@ -50,6 +65,7 @@ READ_FILE=""
 ALIAS_NAME_OVERRIDE=""
 LIST_STORIES_MODE=false
 STORYGEN_MODE=false
+STORYGEN_RENDER_CACHE_MODE=false
 AWARE_COMMAND_MODE=false
 AWARE_ACTION=""
 AWARE_TRIGGER_KIND=""
@@ -63,9 +79,28 @@ STORYGEN_TOPIC=""
 STORYGEN_MAX_WORDS=""
 SENTENCE_INPUT=""
 REQUEST_CLASS="${HALO_TTS_REQUEST_CLASS:-instant}"
+CACHE_CATEGORY="${HALO_TTS_CACHE_CATEGORY:-instant}"
+CACHE_BUNDLE_DIR="${HALO_TTS_CACHE_BUNDLE_DIR:-}"
+CACHE_BUCKET_DIR=""
+LATENCY_COMMAND_MODE=false
+LATENCY_JSON_MODE=false
+LATENCY_REQUEST_STARTED_MS=""
+LATENCY_REQUEST_NAME="speak"
+LATENCY_CLIENT_TRANSPORT_MS="0"
+LATENCY_CACHE_LOOKUP_MS="0"
+LATENCY_RENDER_REQUEST_MS="0"
+LATENCY_AUDIO_PREP_MS="0"
+LATENCY_PLAYBACK_DISPATCH_MS="0"
+LATENCY_TOTAL_MS="0"
+LATENCY_CACHE_HIT="false"
+LATENCY_RENDER_ROUTE="unknown"
+LATENCY_PLAYBACK_PATH="unknown"
+LATENCY_CHUNK_COUNT="1"
+LATENCY_TEXT_CHARS="0"
 
 usage() {
     echo "Usage: halo 'your message here'"
+    echo "       halo -l [--json]"
     echo "       halo --render-only 'sentence'"
     echo "       halo /?"
     echo "       halo speak"
@@ -73,6 +108,7 @@ usage() {
     echo "       halo --render-only read <story-name|filename.txt|/full/path/to/file.txt>"
     echo "       halo list-stories"
     echo "       halo storygen [-mw max_words] [optional topic]"
+    echo "       halo storygen -rc"
     echo "       halo story-gen [-mw max_words] [optional topic]"
     echo "       halo sg [-mw max_words] [optional topic]"
     echo "       halo --render-only storygen [-mw max_words] [optional topic]"
@@ -101,9 +137,11 @@ current_tts_fallback_endpoint() {
 }
 
 tts_endpoint_candidates() {
-    local primary fallback
+    local primary fallback instant_primary instant_fallback
     primary=$(current_tts_endpoint)
     fallback=$(current_tts_fallback_endpoint)
+    instant_primary="$XTTS_ENDPOINT_INSTANT"
+    instant_fallback="$XTTS_ENDPOINT_INSTANT_FALLBACK"
 
     if [ -n "$primary" ]; then
         printf '%s\n' "$primary"
@@ -112,6 +150,89 @@ tts_endpoint_candidates() {
     if [ -n "$fallback" ] && [ "$fallback" != "$primary" ]; then
         printf '%s\n' "$fallback"
     fi
+
+    if [ "$REQUEST_CLASS" = "story" ]; then
+        if [ -n "$instant_primary" ] && [ "$instant_primary" != "$primary" ] && [ "$instant_primary" != "$fallback" ]; then
+            printf '%s\n' "$instant_primary"
+        fi
+
+        if [ -n "$instant_fallback" ] && [ "$instant_fallback" != "$primary" ] && [ "$instant_fallback" != "$fallback" ] && [ "$instant_fallback" != "$instant_primary" ]; then
+            printf '%s\n' "$instant_fallback"
+        fi
+    fi
+}
+
+render_route_label_for_endpoint() {
+    local endpoint="$1"
+    local primary fallback host
+
+    primary=$(current_tts_endpoint)
+    fallback=$(current_tts_fallback_endpoint)
+
+    if [ -n "$endpoint" ] && [ "$endpoint" = "$primary" ]; then
+        printf '%s\n' "$HALO_TTS_PRIMARY_ROUTE_LABEL"
+        return 0
+    fi
+
+    if [ -n "$endpoint" ] && [ "$endpoint" = "$fallback" ]; then
+        printf '%s\n' "$HALO_TTS_FALLBACK_ROUTE_LABEL"
+        return 0
+    fi
+
+    host=$(python3 - "$endpoint" <<'PY'
+import sys
+import urllib.parse
+
+value = sys.argv[1].strip()
+if not value:
+    print("unknown", end="")
+    raise SystemExit(0)
+
+parsed = urllib.parse.urlparse(value)
+print(parsed.hostname or value, end="")
+PY
+) || host="unknown"
+
+    case "$host" in
+        127.0.0.1|localhost|falcon.mipwn.local)
+            printf '%s\n' 'Falcon'
+            ;;
+        *)
+            printf '%s\n' "$host"
+            ;;
+    esac
+}
+
+merge_render_route_label() {
+    local current="$1"
+    local observed="$2"
+
+    if [ -z "$observed" ] || [ "$observed" = "unknown" ]; then
+        printf '%s\n' "$current"
+        return 0
+    fi
+
+    if [ -z "$current" ] || [ "$current" = "unknown" ]; then
+        printf '%s\n' "$observed"
+        return 0
+    fi
+
+    if [ "$current" = "$observed" ]; then
+        printf '%s\n' "$current"
+        return 0
+    fi
+
+    if [ "$current" = "cache" ]; then
+        printf '%s\n' "$observed"
+        return 0
+    fi
+
+    if [ "$observed" = "cache" ]; then
+        printf '%s\n' "$current"
+        return 0
+    fi
+
+    printf '%s\n' 'mixed'
 }
 
 current_tts_max_time() {
@@ -132,6 +253,309 @@ tts_request_label() {
 
 storygen_status() {
     printf '%s\n' "$*" >&2
+}
+
+now_ms() {
+    date +%s%3N
+}
+
+safe_duration_ms() {
+    local start="$1"
+    local finish="$2"
+
+    if [ -z "$start" ] || [ -z "$finish" ]; then
+        printf '0\n'
+        return 0
+    fi
+
+    if [ "$finish" -lt "$start" ]; then
+        printf '0\n'
+        return 0
+    fi
+
+    printf '%s\n' "$(( finish - start ))"
+}
+
+should_record_latency_snapshot() {
+    [ "${HALO_INTERNAL_LATENCY_CHILD:-0}" != "1" ]
+}
+
+reset_latency_metrics() {
+    LATENCY_REQUEST_STARTED_MS=$(now_ms)
+    LATENCY_REQUEST_NAME="speak"
+    if [ "$READ_MODE" = true ]; then
+        LATENCY_REQUEST_NAME="read"
+    fi
+    LATENCY_CLIENT_TRANSPORT_MS="0"
+    if [ -n "$HALO_CLIENT_STARTED_AT_MS" ] && [[ "$HALO_CLIENT_STARTED_AT_MS" =~ ^[0-9]+$ ]] && [ "$LATENCY_REQUEST_STARTED_MS" -ge "$HALO_CLIENT_STARTED_AT_MS" ]; then
+        LATENCY_CLIENT_TRANSPORT_MS="$(( LATENCY_REQUEST_STARTED_MS - HALO_CLIENT_STARTED_AT_MS ))"
+    fi
+    LATENCY_CACHE_LOOKUP_MS="0"
+    LATENCY_RENDER_REQUEST_MS="0"
+    LATENCY_AUDIO_PREP_MS="0"
+    LATENCY_PLAYBACK_DISPATCH_MS="0"
+    LATENCY_TOTAL_MS="0"
+    LATENCY_CACHE_HIT="false"
+    LATENCY_RENDER_ROUTE="unknown"
+    LATENCY_PLAYBACK_PATH="unknown"
+    LATENCY_CHUNK_COUNT="1"
+    LATENCY_TEXT_CHARS="0"
+}
+
+set_latency_text_chars() {
+    LATENCY_TEXT_CHARS=$(python3 - "$1" <<'PY'
+import sys
+print(len(sys.argv[1]))
+PY
+)
+}
+
+persist_latency_snapshot() {
+    local state_file
+
+    if ! should_record_latency_snapshot; then
+        return 0
+    fi
+
+    state_file="${HALO_LATENCY_STATE_FILE:-$LATENCY_STATE_FILE_DEFAULT}"
+    mkdir -p "$(dirname "$state_file")"
+    LATENCY_TOTAL_MS=$(safe_duration_ms "$LATENCY_REQUEST_STARTED_MS" "$(now_ms)")
+
+    python3 - "$state_file" "$HALO_LATENCY_HISTORY_LIMIT" "$LATENCY_REQUEST_NAME" "$REQUEST_CLASS" "$LATENCY_RENDER_ROUTE" "$LATENCY_PLAYBACK_PATH" "$LATENCY_CACHE_HIT" "$LATENCY_CHUNK_COUNT" "$LATENCY_TEXT_CHARS" "$LATENCY_CLIENT_TRANSPORT_MS" "$LATENCY_CACHE_LOOKUP_MS" "$LATENCY_RENDER_REQUEST_MS" "$LATENCY_AUDIO_PREP_MS" "$LATENCY_PLAYBACK_DISPATCH_MS" "$LATENCY_TOTAL_MS" <<'PY'
+import datetime
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+history_limit = max(1, int(sys.argv[2]))
+
+snapshot = {
+    'timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    'request_name': sys.argv[3],
+    'request_class': sys.argv[4],
+    'render_route': sys.argv[5],
+    'playback_path': sys.argv[6],
+    'cache_hit': sys.argv[7].lower() == 'true',
+    'chunk_count': int(sys.argv[8]),
+    'text_chars': int(sys.argv[9]),
+    'client_transport_ms': int(sys.argv[10]),
+    'cache_lookup_ms': int(sys.argv[11]),
+    'render_request_ms': int(sys.argv[12]),
+    'audio_prepare_ms': int(sys.argv[13]),
+    'playback_dispatch_ms': int(sys.argv[14]),
+    'total_ms': int(sys.argv[15]),
+}
+
+payload = {'latest': snapshot, 'recent': [snapshot]}
+if path.exists():
+    try:
+        current = json.loads(path.read_text(encoding='utf-8'))
+    except Exception:
+        current = {}
+    recent = current.get('recent', [])
+    if not isinstance(recent, list):
+        recent = []
+    recent.append(snapshot)
+    payload['recent'] = recent[-history_limit:]
+
+path.write_text(json.dumps(payload, indent=2) + '\n', encoding='utf-8')
+PY
+}
+
+show_latency_metrics() {
+    local state_file
+
+    state_file="${HALO_LATENCY_STATE_FILE:-$LATENCY_STATE_FILE_DEFAULT}"
+    mkdir -p "$(dirname "$state_file")"
+
+    if [ ! -f "$state_file" ]; then
+        if [ "$LATENCY_JSON_MODE" = true ]; then
+            printf '%s\n' '{"latest": null, "recent": []}'
+        else
+            echo 'No HAL latency data recorded yet.'
+        fi
+        return 0
+    fi
+
+    if [ "$LATENCY_JSON_MODE" = true ]; then
+        cat "$state_file"
+        return 0
+    fi
+
+    python3 - "$state_file" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding='utf-8'))
+latest = payload.get('latest')
+recent = payload.get('recent', [])
+
+if not latest:
+    print('No HAL latency data recorded yet.')
+    raise SystemExit(0)
+
+bars = '▁▂▃▄▅▆▇█'
+
+def sparkline(values):
+    values = [max(0, int(v)) for v in values if v is not None]
+    if not values:
+        return ''
+    peak = max(values)
+    if peak <= 0:
+        return bars[0] * len(values)
+    return ''.join(bars[min(len(bars) - 1, round((value / peak) * (len(bars) - 1)))] for value in values)
+
+def bar(label, value, total, width=28):
+    total = max(total, 1)
+    filled = min(width, round((value / total) * width))
+    return f'{label:16} ' + ('█' * filled) + ('░' * (width - filled)) + f' {value:>5} ms'
+
+print('HAL latency summary')
+print(f"  Timestamp:      {latest.get('timestamp', 'unknown')}")
+print(f"  Request:        {latest.get('request_name', 'unknown')} ({latest.get('request_class', 'unknown')})")
+print(f"  Render route:   {latest.get('render_route', 'unknown')}")
+print(f"  Playback path:  {latest.get('playback_path', 'unknown')}")
+print(f"  Cache hit:      {'yes' if latest.get('cache_hit') else 'no'}")
+print(f"  Chunks:         {latest.get('chunk_count', 0)}")
+print(f"  Text chars:     {latest.get('text_chars', 0)}")
+print('')
+
+total = int(latest.get('total_ms', 0) or 0)
+stages = [
+    ('Client transport', int(latest.get('client_transport_ms', 0) or 0)),
+    ('Cache lookup', int(latest.get('cache_lookup_ms', 0) or 0)),
+    ('Render request', int(latest.get('render_request_ms', 0) or 0)),
+    ('Audio prepare', int(latest.get('audio_prepare_ms', 0) or 0)),
+    ('WAV dispatch', int(latest.get('playback_dispatch_ms', 0) or 0)),
+]
+for label, value in stages:
+    print(bar(label, value, total))
+print(bar('Total', total, total))
+
+recent_total = [entry.get('total_ms', 0) for entry in recent[-16:]]
+recent_render = [entry.get('render_request_ms', 0) for entry in recent[-16:]]
+recent_playback = [entry.get('playback_dispatch_ms', 0) for entry in recent[-16:]]
+print('')
+print('Recent totals     ' + sparkline(recent_total))
+print('Recent render     ' + sparkline(recent_render))
+print('Recent WAV dispatch ' + sparkline(recent_playback))
+PY
+}
+
+cache_bucket_dir_for_category() {
+    local category="${1:-$CACHE_CATEGORY}"
+
+    case "$category" in
+        commentary)
+            printf '%s\n' "$CACHE_DIR/commentary"
+            ;;
+        story)
+            printf '%s\n' "$CACHE_DIR/story/single"
+            ;;
+        story-bundle)
+            if [ -n "$CACHE_BUNDLE_DIR" ]; then
+                printf '%s\n' "$CACHE_BUNDLE_DIR"
+            else
+                printf '%s\n' "$CACHE_DIR/story/bundles/ad-hoc"
+            fi
+            ;;
+        instant|*)
+            printf '%s\n' "$CACHE_DIR/instant"
+            ;;
+    esac
+}
+
+story_bundle_dir() {
+    local story_hash="$1"
+    printf '%s\n' "$CACHE_DIR/story/bundles/$story_hash"
+}
+
+story_manifest_path_for_story_file() {
+    local story_file="$1"
+    local story_hash
+
+    story_hash=$(python3 - "$story_file" <<'PY'
+import hashlib
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding='utf-8').replace('\r\n', '\n').replace('\r', '\n')
+print(hashlib.sha256(text.encode('utf-8')).hexdigest())
+PY
+) || return 1
+
+    printf '%s\n' "$(story_bundle_dir "$story_hash")/playlist.txt"
+}
+
+story_single_cache_file_for_text() {
+    local story_text="$1"
+    local cache_key
+
+    cache_key=$(printf '%s\n%s\n%s' "$HALO_TTS_CACHE_FORMAT_VERSION" "$HALO_TTS_TRAILING_SILENCE_MS" "$story_text" | sha256sum | awk '{print $1}') || return 1
+    printf '%s\n' "$CACHE_DIR/story/single/${cache_key}.wav"
+}
+
+story_file_is_cached() {
+    local story_file="$1"
+    local story_text manifest_path single_cache_file
+
+    story_text=$(python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n"), end="")' "$story_file") || return 1
+    if ! python3 -c 'import sys; raise SystemExit(0 if sys.argv[1].strip() else 1)' "$story_text"; then
+        return 1
+    fi
+
+    if story_requires_chunking "$story_file"; then
+        manifest_path=$(story_manifest_path_for_story_file "$story_file") || return 1
+        story_playlist_is_complete "$manifest_path"
+        return $?
+    fi
+
+    single_cache_file=$(story_single_cache_file_for_text "$story_text") || return 1
+    [ -s "$single_cache_file" ]
+}
+
+render_uncached_story_cache() {
+    local story_file prompt_name total_count rendered_count cached_count failed_count
+    total_count=0
+    rendered_count=0
+    cached_count=0
+    failed_count=0
+
+    prompt_name=$(basename "${HALO_STORYGEN_PROMPT_FILE:-$STORYGEN_PROMPT_FILE_DEFAULT}")
+    mkdir -p "$STORY_DIR"
+    storygen_status "HALO story cache sweep requested"
+
+    while IFS= read -r -d '' story_file; do
+        total_count=$(( total_count + 1 ))
+        if story_file_is_cached "$story_file"; then
+            cached_count=$(( cached_count + 1 ))
+            storygen_status "  Cached: $(basename "$story_file")"
+            continue
+        fi
+
+        storygen_status "  Rendering to cache: $(basename "$story_file")"
+        if "$0" --render-only read "$story_file" >/dev/null; then
+            rendered_count=$(( rendered_count + 1 ))
+        else
+            failed_count=$(( failed_count + 1 ))
+            storygen_status "  Render failed: $(basename "$story_file")"
+        fi
+    done < <(find "$STORY_DIR" -maxdepth 1 -type f -name '*.txt' ! -name "$prompt_name" -print0 | sort -z)
+
+    storygen_status "  Sweep summary: total=${total_count} cached=${cached_count} rendered=${rendered_count} failed=${failed_count}"
+    [ "$failed_count" -eq 0 ]
+}
+
+configure_cache_paths() {
+    CACHE_KEY=$(printf '%s\n%s\n%s' "$HALO_TTS_CACHE_FORMAT_VERSION" "$HALO_TTS_TRAILING_SILENCE_MS" "$sentence" | sha256sum | awk '{print $1}')
+    CACHE_BUCKET_DIR=$(cache_bucket_dir_for_category)
+    mkdir -p "$CACHE_BUCKET_DIR"
+    CACHE_FILE="${CACHE_BUCKET_DIR}/${CACHE_KEY}.wav"
+    TEXT_FILE="${CACHE_BUCKET_DIR}/${CACHE_KEY}.txt"
+    ALIAS_TEXT_FILE=""
 }
 
 tts_service_available() {
@@ -184,12 +608,141 @@ request_tts_audio() {
     return 1
 }
 
-play_audio_file() {
+play_audio_file_direct() {
     local audio_file="$1"
     paplay "$audio_file" 2>/dev/null || aplay "$audio_file" 2>/dev/null || {
-        echo "  Error: No audio player available (tried aplay, paplay)"
+        echo "  Error: No audio player available (tried aplay, paplay)" >&2
         return 1
     }
+}
+
+queue_playback_health_endpoint() {
+    if [ -n "${HALO_PLAYBACK_QUEUE_HEALTH_ENDPOINT:-}" ]; then
+        printf '%s\n' "$HALO_PLAYBACK_QUEUE_HEALTH_ENDPOINT"
+    else
+        printf '%s\n' "${HALO_PLAYBACK_QUEUE_ENDPOINT%/api/tts/play}/health"
+    fi
+}
+
+queue_playback_service_available() {
+    local health_endpoint
+
+    if [ "$HALO_PLAYBACK_MODE" = "direct" ]; then
+        return 1
+    fi
+
+    health_endpoint=$(queue_playback_health_endpoint)
+    curl -s --connect-timeout "$HALO_PLAYBACK_QUEUE_CONNECT_TIMEOUT" --max-time "$HALO_PLAYBACK_QUEUE_CONNECT_TIMEOUT" "$health_endpoint" >/dev/null 2>&1
+}
+
+resolve_cached_text_for_audio_file() {
+    local audio_file="$1"
+    local text_file
+
+    text_file="${audio_file%.wav}.txt"
+    if [ -s "$text_file" ]; then
+        cat "$text_file"
+    fi
+}
+
+queue_audio_file_for_playback() {
+    local audio_file="$1"
+    local spoken_text="$2"
+    local response_file http_code response_body
+
+    if [ ! -s "$audio_file" ]; then
+        echo "  Error: Audio file not found for queued playback: $audio_file" >&2
+        return 1
+    fi
+
+    if [ -z "$spoken_text" ]; then
+        spoken_text=$(resolve_cached_text_for_audio_file "$audio_file")
+    fi
+
+    if [ -z "$spoken_text" ]; then
+        echo "  Error: No companion text metadata found for queued playback: $audio_file" >&2
+        return 1
+    fi
+
+    response_file=$(mktemp /tmp/halo_queue_XXXXXX.json) || return 1
+    http_code=$(curl -sS \
+        --connect-timeout "$HALO_PLAYBACK_QUEUE_CONNECT_TIMEOUT" \
+        --max-time "$HALO_PLAYBACK_QUEUE_MAX_TIME" \
+        -o "$response_file" \
+        -w "%{http_code}" \
+        --form-string "text=$spoken_text" \
+        -F "wav=@${audio_file};type=audio/wav" \
+        "$HALO_PLAYBACK_QUEUE_ENDPOINT") || {
+        rm -f "$response_file"
+        return 1
+    }
+
+    if [ "$http_code" != "200" ]; then
+        response_body=$(tr -d '\r' < "$response_file" 2>/dev/null)
+        rm -f "$response_file"
+        echo "  Error: Queue playback request returned HTTP ${http_code}: ${response_body}" >&2
+        return 1
+    fi
+
+    rm -f "$response_file"
+    return 0
+}
+
+queue_dotmatrix_visualization() {
+    local audio_file="$1"
+    local spoken_text="${2:-}"
+    local trigger_command=""
+
+    if [ "$HALO_DOTMATRIX_ENABLED" != "1" ] || [ ! -s "$audio_file" ]; then
+        return 0
+    fi
+
+    if command -v "$HALO_DOTMATRIX_TRIGGER_COMMAND" >/dev/null 2>&1; then
+        trigger_command="$HALO_DOTMATRIX_TRIGGER_COMMAND"
+    elif [ -x "$HALO_DOTMATRIX_VENV_TRIGGER_COMMAND" ]; then
+        trigger_command="$HALO_DOTMATRIX_VENV_TRIGGER_COMMAND"
+    fi
+
+    if [ -n "$trigger_command" ]; then
+        "$trigger_command" trigger --wav-path "$audio_file" --text "$spoken_text" --queue-dir "$HALO_DOTMATRIX_QUEUE_DIR" >/dev/null 2>&1 &
+        return 0
+    fi
+
+    if command -v "$HALO_SENSORY_PYTHON" >/dev/null 2>&1; then
+        "$HALO_SENSORY_PYTHON" -m idotmatrix.halo_display_cli trigger --wav-path "$audio_file" --text "$spoken_text" --queue-dir "$HALO_DOTMATRIX_QUEUE_DIR" >/dev/null 2>&1 &
+    fi
+}
+
+play_audio_file() {
+    local audio_file="$1"
+    local spoken_text="${2:-}"
+    local playback_started_ms dispatch_ms
+
+    playback_started_ms=$(now_ms)
+
+    if queue_playback_service_available; then
+        if queue_audio_file_for_playback "$audio_file" "$spoken_text"; then
+            dispatch_ms=$(safe_duration_ms "$playback_started_ms" "$(now_ms)")
+            LATENCY_PLAYBACK_DISPATCH_MS="$(( ${LATENCY_PLAYBACK_DISPATCH_MS:-0} + dispatch_ms ))"
+            LATENCY_PLAYBACK_PATH="queued"
+            echo "  Playback: queued"
+            return 0
+        fi
+        echo "  Playback: local fallback" >&2
+    elif [ "$HALO_PLAYBACK_MODE" != "direct" ]; then
+        echo "  Playback: local fallback" >&2
+    fi
+
+    if [ "$HALO_PLAYBACK_MODE" = "direct" ]; then
+        LATENCY_PLAYBACK_PATH="local"
+    else
+        LATENCY_PLAYBACK_PATH="local_fallback"
+    fi
+    echo "  Playback: local"
+    queue_dotmatrix_visualization "$audio_file" "$spoken_text"
+    play_audio_file_direct "$audio_file"
+    dispatch_ms=$(safe_duration_ms "$playback_started_ms" "$(now_ms)")
+    LATENCY_PLAYBACK_DISPATCH_MS="$(( ${LATENCY_PLAYBACK_DISPATCH_MS:-0} + dispatch_ms ))"
 }
 
 story_playlist_is_complete() {
@@ -261,11 +814,15 @@ PY
 }
 
 parse_storygen_args() {
+    STORYGEN_RENDER_CACHE_MODE=false
     STORYGEN_MAX_WORDS=""
     STORYGEN_TOPIC=""
 
     while [ $# -gt 0 ]; do
         case "$1" in
+            -rc)
+                STORYGEN_RENDER_CACHE_MODE=true
+                ;;
             -mw)
                 shift
                 if [ -z "${1:-}" ]; then
@@ -288,6 +845,11 @@ parse_storygen_args() {
         esac
         shift
     done
+
+    if [ "$STORYGEN_RENDER_CACHE_MODE" = true ] && { [ -n "$STORYGEN_MAX_WORDS" ] || [ -n "$STORYGEN_TOPIC" ]; }; then
+        echo "Error: -rc cannot be combined with -mw or a story topic." >&2
+        exit 1
+    fi
 }
 
 ensure_storygen_dirs() {
@@ -1429,13 +1991,62 @@ resolve_story_file() {
 
 list_stories() {
     mkdir -p "$STORY_DIR"
-    python3 - "$STORY_DIR" "$STORYGEN_PROMPT_FILE_DEFAULT" <<'PY'
+    python3 - "$STORY_DIR" "$STORYGEN_PROMPT_FILE_DEFAULT" "$CACHE_DIR" "$HALO_TTS_CACHE_FORMAT_VERSION" "$HALO_TTS_TRAILING_SILENCE_MS" "$HALO_STORY_READ_MAX_CHARS" "$HALO_STORY_READ_MAX_WORDS" <<'PY'
+import hashlib
 import datetime
 import pathlib
+import re
 import sys
 
 story_dir = pathlib.Path(sys.argv[1])
 prompt_name = pathlib.Path(sys.argv[2]).name
+cache_dir = pathlib.Path(sys.argv[3])
+cache_format_version = sys.argv[4]
+trailing_silence_ms = sys.argv[5]
+max_chars = int(sys.argv[6])
+max_words = int(sys.argv[7])
+
+
+def normalize_text(path: pathlib.Path) -> str:
+    return path.read_text(encoding='utf-8').replace('\r\n', '\n').replace('\r', '\n')
+
+
+def story_requires_chunking(text: str) -> bool:
+    stripped = text.strip()
+    return bool(stripped) and (len(stripped) > max_chars or len(stripped.split()) > max_words)
+
+
+def single_story_cache_exists(text: str) -> bool:
+    cache_key = hashlib.sha256(
+        f'{cache_format_version}\n{trailing_silence_ms}\n{text}'.encode('utf-8')
+    ).hexdigest()
+    return (cache_dir / 'story' / 'single' / f'{cache_key}.wav').is_file()
+
+
+def playlist_cache_exists(text: str) -> bool:
+    story_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
+    manifest_path = cache_dir / 'story' / 'bundles' / story_hash / 'playlist.txt'
+    if not manifest_path.is_file() or manifest_path.stat().st_size == 0:
+        return False
+
+    for line in manifest_path.read_text(encoding='utf-8').splitlines():
+        candidate = line.strip()
+        if not candidate:
+            return False
+        if not pathlib.Path(candidate).is_file():
+            return False
+    return True
+
+
+def render_cache_label(path: pathlib.Path) -> str:
+    text = normalize_text(path)
+    if not text.strip():
+        return 'EMPTY'
+    if story_requires_chunking(text):
+        return 'YES' if playlist_cache_exists(text) else 'NO'
+    return 'YES' if single_story_cache_exists(text) else 'NO'
+
+
 files = [
     path for path in story_dir.glob('*.txt')
     if path.is_file() and not path.name.startswith('.') and path.name != prompt_name
@@ -1444,9 +2055,12 @@ files.sort(key=lambda path: (path.stat().st_mtime, path.name), reverse=True)
 if not files:
     print('No stories found.')
     raise SystemExit(0)
+
+print(f'{"MODIFIED":19} {"CACHED":6} STORY')
 for path in files:
     stamp = datetime.datetime.fromtimestamp(path.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')
-    print(f'{stamp} {path.name}')
+    cached = render_cache_label(path)
+    print(f'{stamp} {cached:6} {path.name}')
 PY
 }
 
@@ -1601,7 +2215,7 @@ PY
 
 render_story_in_chunks() {
     local story_file="$1"
-    local story_hash chunk_dir manifest_path manifest_tmp chunk_file chunk_text cache_path chunk_count
+    local story_hash bundle_dir chunk_dir manifest_path manifest_tmp chunk_file chunk_text cache_path chunk_count chunk_render_started_ms chunk_route_file observed_route
 
     story_hash=$(python3 - "$story_file" <<'PY'
 import hashlib
@@ -1614,16 +2228,23 @@ PY
 ) || return 1
 
     chunk_dir=$(mktemp -d "${STATE_DIR}/story-read.XXXXXX") || return 1
-    manifest_path="${CACHE_DIR}/${story_hash}.playlist.txt"
+    bundle_dir=$(story_bundle_dir "$story_hash")
+    mkdir -p "$bundle_dir"
+    manifest_path="${bundle_dir}/playlist.txt"
     manifest_tmp="${manifest_path}.tmp"
 
     if story_playlist_is_complete "$manifest_path"; then
         if [ "$RENDER_ONLY" = true ]; then
             printf '%s\n' "$manifest_path"
         else
+            chunk_count=$(grep -cve '^[[:space:]]*$' "$manifest_path" 2>/dev/null || printf '0')
+            LATENCY_CACHE_HIT="true"
+            LATENCY_RENDER_ROUTE="cache"
+            LATENCY_CHUNK_COUNT="$chunk_count"
             echo "HALO reading: $story_file"
             echo "  Story playlist cache hit"
             play_story_playlist "$manifest_path" || return 1
+            persist_latency_snapshot
             echo "HALO processing complete."
         fi
         return 0
@@ -1642,6 +2263,8 @@ PY
     : > "$manifest_tmp"
 
     if [ "$RENDER_ONLY" = false ]; then
+        LATENCY_CHUNK_COUNT="$chunk_count"
+        LATENCY_RENDER_ROUTE="unknown"
         echo "HALO reading: $story_file"
         echo "  Chunking story into ${chunk_count} segments for XTTS..."
     fi
@@ -1652,15 +2275,26 @@ PY
             continue
         fi
 
-        cache_path=$(HALO_INTERNAL_READ_CHILD=1 HALO_TTS_REQUEST_CLASS=story "$0" --render-only "$chunk_text") || {
+        chunk_render_started_ms=$(now_ms)
+        chunk_route_file=$(mktemp "${STATE_DIR}/story-route.XXXXXX") || {
             rm -f "$manifest_tmp"
             rm -rf "$chunk_dir"
             return 1
         }
+        cache_path=$(HALO_INTERNAL_READ_CHILD=1 HALO_INTERNAL_LATENCY_CHILD=1 HALO_INTERNAL_ROUTE_FILE="$chunk_route_file" HALO_TTS_REQUEST_CLASS=story HALO_TTS_CACHE_CATEGORY=story-bundle HALO_TTS_CACHE_BUNDLE_DIR="$bundle_dir" "$0" --render-only "$chunk_text") || {
+            rm -f "$chunk_route_file"
+            rm -f "$manifest_tmp"
+            rm -rf "$chunk_dir"
+            return 1
+        }
+        observed_route=$(tr -d '\r\n' < "$chunk_route_file" 2>/dev/null || true)
+        rm -f "$chunk_route_file"
+        LATENCY_RENDER_ROUTE=$(merge_render_route_label "$LATENCY_RENDER_ROUTE" "$observed_route")
+        LATENCY_RENDER_REQUEST_MS="$(( ${LATENCY_RENDER_REQUEST_MS:-0} + $(safe_duration_ms "$chunk_render_started_ms" "$(now_ms)") ))"
         printf '%s\n' "$cache_path" >> "$manifest_tmp"
 
         if [ "$RENDER_ONLY" = false ]; then
-            play_audio_file "$cache_path" || {
+            play_audio_file "$cache_path" "$chunk_text" || {
                 rm -f "$manifest_tmp"
                 rm -rf "$chunk_dir"
                 return 1
@@ -1675,6 +2309,7 @@ PY
     if [ "$RENDER_ONLY" = true ]; then
         printf '%s\n' "$manifest_path"
     else
+        persist_latency_snapshot
         echo "HALO processing complete."
     fi
 }
@@ -2013,6 +2648,12 @@ wait_for_story_request() {
 handle_storygen() {
     local request_id story_path
     load_storygen_env
+
+    if [ "$STORYGEN_RENDER_CACHE_MODE" = true ]; then
+        render_uncached_story_cache
+        return $?
+    fi
+
     storygen_status "HALO story generation requested"
     if [ -n "$STORYGEN_TOPIC" ]; then
         storygen_status "  Topic: $STORYGEN_TOPIC"
@@ -2035,13 +2676,19 @@ handle_storygen() {
 
 build_alias_text_file() {
     local alias_base
+
+    if [ "$CACHE_CATEGORY" = "story-bundle" ] || [ -n "$CACHE_BUNDLE_DIR" ]; then
+        ALIAS_TEXT_FILE=""
+        return 0
+    fi
+
     alias_base=$(python3 -c 'import re, sys, unicodedata; text = unicodedata.normalize("NFKD", sys.argv[1]); text = text.encode("ascii", "ignore").decode("ascii"); words = re.findall(r"[A-Za-z0-9]+", text); base = "_".join(words) or "text"; print(base[:120])' "${ALIAS_NAME_OVERRIDE:-$sentence}")
     if [ -z "$alias_base" ]; then
         alias_base="text"
     fi
-    ALIAS_TEXT_FILE="${CACHE_DIR}/${alias_base}.txt"
+    ALIAS_TEXT_FILE="${CACHE_BUCKET_DIR}/${alias_base}.txt"
     if [ -e "$ALIAS_TEXT_FILE" ] && [ "$(tr -d '\r\n' < "$ALIAS_TEXT_FILE" 2>/dev/null)" != "${CACHE_KEY}.wav" ]; then
-        ALIAS_TEXT_FILE="${CACHE_DIR}/${alias_base}__${CACHE_KEY:0:12}.txt"
+        ALIAS_TEXT_FILE="${CACHE_BUCKET_DIR}/${alias_base}__${CACHE_KEY:0:12}.txt"
     fi
 }
 
@@ -2055,11 +2702,12 @@ sync_mapping_mtime() {
 }
 
 ensure_cache_mappings() {
+    mkdir -p "$CACHE_BUCKET_DIR"
     if [ ! -s "$TEXT_FILE" ]; then
         printf '%s\n' "$sentence" > "$TEXT_FILE"
     fi
     build_alias_text_file
-    if [ ! -s "$ALIAS_TEXT_FILE" ]; then
+    if [ -n "$ALIAS_TEXT_FILE" ] && [ ! -s "$ALIAS_TEXT_FILE" ]; then
         printf '%s\n' "${CACHE_KEY}.wav" > "$ALIAS_TEXT_FILE"
     fi
     sync_mapping_mtime
@@ -2070,12 +2718,25 @@ if [ "${1:-}" = "--render-only" ]; then
     shift
 fi
 
+if [ "${1:-}" = "-l" ] || [ "${1:-}" = "--latency" ]; then
+    LATENCY_COMMAND_MODE=true
+    shift
+    if [ "${1:-}" = "--json" ]; then
+        LATENCY_JSON_MODE=true
+        shift
+    fi
+    if [ $# -ne 0 ]; then
+        usage
+        exit 1
+    fi
+fi
+
 if [[ "${1:-}" = "/?" || "${1:-}" = "-h" || "${1:-}" = "--help" || "${1:-}" = "help" ]]; then
     usage
     exit 0
 fi
 
-if [ $# -eq 0 ]; then
+if [ "$LATENCY_COMMAND_MODE" != true ] && [ $# -eq 0 ]; then
     usage
     exit 1
 fi
@@ -2158,6 +2819,7 @@ case "$1" in
         ;;
     read)
         READ_MODE=true
+        CACHE_CATEGORY="story"
         if [ $# -ne 2 ] || [ -z "${2:-}" ]; then
             usage
             exit 1
@@ -2187,9 +2849,9 @@ case "$1" in
         echo "Source: $COMMENTARY_FILE"
         echo "$line"
         if [ "$RENDER_ONLY" = true ]; then
-            exec "$0" --render-only "$line"
+            exec env HALO_TTS_CACHE_CATEGORY=commentary "$0" --render-only "$line"
         else
-            exec "$0" "$line"
+            exec env HALO_TTS_CACHE_CATEGORY=commentary "$0" "$line"
         fi
         ;;
     list-stories)
@@ -2215,6 +2877,11 @@ esac
 
 if [ "$LIST_STORIES_MODE" = true ]; then
     list_stories
+    exit 0
+fi
+
+if [ "$LATENCY_COMMAND_MODE" = true ]; then
+    show_latency_metrics
     exit 0
 fi
 
@@ -2256,12 +2923,12 @@ else
     fi
 fi
 
+reset_latency_metrics
+set_latency_text_chars "$sentence"
+
 mkdir -p "$CACHE_DIR"
 
-CACHE_KEY=$(printf '%s' "$sentence" | sha256sum | awk '{print $1}')
-CACHE_FILE="${CACHE_DIR}/${CACHE_KEY}.wav"
-TEXT_FILE="${CACHE_DIR}/${CACHE_KEY}.txt"
-ALIAS_TEXT_FILE=""
+configure_cache_paths
 TTS_ENDPOINT=$(current_tts_endpoint)
 TTS_MAX_TIME=$(current_tts_max_time)
 TTS_LABEL=$(tts_request_label)
@@ -2287,13 +2954,27 @@ else
     fi
 fi
 
+cache_lookup_started_ms=$(now_ms)
+cache_file_exists=false
 if [ -s "$CACHE_FILE" ]; then
+    cache_file_exists=true
+fi
+LATENCY_CACHE_LOOKUP_MS=$(safe_duration_ms "$cache_lookup_started_ms" "$(now_ms)")
+
+if [ "$cache_file_exists" = true ]; then
     ensure_cache_mappings
+    if [ -n "${HALO_INTERNAL_ROUTE_FILE:-}" ]; then
+        printf '%s\n' 'cache' > "$HALO_INTERNAL_ROUTE_FILE"
+    fi
     if [ "$RENDER_ONLY" = false ]; then
+        LATENCY_CACHE_HIT="true"
+        LATENCY_RENDER_ROUTE="cache"
         if [ "${HALO_INTERNAL_READ_CHILD:-0}" != "1" ]; then
             echo "  Cache hit: using pre-generated audio"
+                echo "  Render: cache hit"
         fi
-            play_audio_file "$CACHE_FILE" || exit 1
+            play_audio_file "$CACHE_FILE" "$sentence" || exit 1
+        persist_latency_snapshot
         if [ "${HALO_INTERNAL_READ_CHILD:-0}" != "1" ]; then
             echo "HALO processing complete."
         fi
@@ -2304,11 +2985,22 @@ fi
 encoded_text=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$sentence")
 TMPFILE=$(mktemp /tmp/halo_XXXXXX.wav)
 
+render_started_ms=$(now_ms)
 request_tts_audio "$TMPFILE" "$encoded_text" || {
     rm -f "$TMPFILE"
     exit 1
 }
+LATENCY_RENDER_REQUEST_MS=$(safe_duration_ms "$render_started_ms" "$(now_ms)")
+LATENCY_RENDER_ROUTE=$(render_route_label_for_endpoint "$TTS_ENDPOINT_USED")
+if [ -n "${HALO_INTERNAL_ROUTE_FILE:-}" ]; then
+    printf '%s\n' "$LATENCY_RENDER_ROUTE" > "$HALO_INTERNAL_ROUTE_FILE"
+fi
 
+if [ "$RENDER_ONLY" = false ] && [ "${HALO_INTERNAL_READ_CHILD:-0}" != "1" ]; then
+    echo "  Render: $LATENCY_RENDER_ROUTE"
+fi
+
+audio_prepare_started_ms=$(now_ms)
 FILE_TYPE=$(file -b "$TMPFILE")
 if [[ ! "$FILE_TYPE" =~ WAV|RIFF|audio ]]; then
     rm -f "$TMPFILE"
@@ -2321,8 +3013,10 @@ append_trailing_silence "$TMPFILE" "$HALO_TTS_TRAILING_SILENCE_MS"
 cp "$TMPFILE" "$CACHE_FILE" 2>/dev/null || true
 ensure_cache_mappings
 rm -f "$TMPFILE"
+LATENCY_AUDIO_PREP_MS=$(safe_duration_ms "$audio_prepare_started_ms" "$(now_ms)")
 
 if [ "$RENDER_ONLY" = true ]; then
+    persist_latency_snapshot
     echo "$CACHE_FILE"
     exit 0
 fi
@@ -2330,7 +3024,8 @@ fi
 if [ "${HALO_INTERNAL_READ_CHILD:-0}" != "1" ]; then
     echo "  Playing HAL-006 voice..."
 fi
-play_audio_file "$CACHE_FILE" || exit 1
+play_audio_file "$CACHE_FILE" "$sentence" || exit 1
+persist_latency_snapshot
 
 if [ "${HALO_INTERNAL_READ_CHILD:-0}" != "1" ]; then
     echo "HALO processing complete."
