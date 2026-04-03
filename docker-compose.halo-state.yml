@@ -1,0 +1,26 @@
+services:
+  halo-state-postgres:
+    image: postgres:16
+    container_name: halo-state-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: halo_state
+      POSTGRES_USER: halo_state
+      POSTGRES_PASSWORD: halo_state_dev
+    ports:
+      - "15433:5432"
+    volumes:
+      - halo-state-postgres-data:/var/lib/postgresql/data
+
+  halo-state-qdrant:
+    image: qdrant/qdrant:latest
+    container_name: halo-state-qdrant
+    restart: unless-stopped
+    ports:
+      - "16333:6333"
+    volumes:
+      - halo-state-qdrant-data:/qdrant/storage
+
+volumes:
+  halo-state-postgres-data:
+  halo-state-qdrant-data:

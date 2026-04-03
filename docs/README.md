@@ -5,14 +5,17 @@ This directory contains comprehensive documentation for the TTS Pipeline project
 ## Documentation Structure
 
 ### 📐 [Architecture](architecture/)
+
 System architecture, component interactions, and data flow diagrams.
 
 - [System Overview](architecture/system-overview.md)
 - [Component Architecture](architecture/components.md)
+- [HAL Aware State System](architecture/aware-state-system.md)
 - [Data Flow](architecture/data-flow.md)
 - [Network Architecture](architecture/network.md)
 
 ### 🎨 [Design](design/)
+
 Design principles, patterns, and implementation decisions.
 
 - [Design Principles](design/principles.md)
@@ -21,6 +24,7 @@ Design principles, patterns, and implementation decisions.
 - [Audio Pipeline Design](design/audio-pipeline.md)
 
 ### 🔧 [Development](development/)
+
 Developer guides, setup instructions, and contribution guidelines.
 
 - [Development Setup](development/setup.md)
@@ -29,6 +33,7 @@ Developer guides, setup instructions, and contribution guidelines.
 - [Code Style Guide](development/code-style.md)
 
 ### 📚 [API Reference](api/)
+
 Detailed API documentation for all endpoints and interfaces.
 
 - [Daemon APIs](api/daemons.md)
@@ -37,6 +42,7 @@ Detailed API documentation for all endpoints and interfaces.
 - [Error Handling](api/errors.md)
 
 ### 🚀 [Deployment](deployment/)
+
 Deployment guides, configuration, and operational procedures.
 
 - [Deployment Guide](deployment/guide.md)

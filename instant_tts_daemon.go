@@ -1,3 +1,6 @@
+//go:build tts_experimental
+// +build tts_experimental
+
 package main
 
 import (

@@ -32,17 +32,20 @@ AWARE_MEMORY_DB_DEFAULT="${STATE_DIR}/aware-memory.sqlite3"
 AWARE_SUMMARY_FILE_DEFAULT="${STATE_DIR}/aware-summary.txt"
 AWARE_TRIGGER_CONFIG_DEFAULT="${STATE_DIR}/aware-triggers.json"
 AWARE_OUTPUT_DIR_DEFAULT="${STATE_DIR}/aware-output"
+REVIEW_OUTPUT_DIR_DEFAULT="${STATE_DIR}/review-output"
 AWARE_PERSONA_FILE_DEFAULT="${HALO_ROOT}/persona/hal-9000.txt"
 OPENAI_API_URL="${OPENAI_API_URL:-https://api.openai.com/v1/responses}"
 OPENAI_MODEL="${OPENAI_MODEL:-gpt-5.4}"
 HALO_STORYGEN_WAIT_SECONDS="${HALO_STORYGEN_WAIT_SECONDS:-600}"
 HALO_STORY_READ_MAX_CHARS="${HALO_STORY_READ_MAX_CHARS:-320}"
 HALO_STORY_READ_MAX_WORDS="${HALO_STORY_READ_MAX_WORDS:-40}"
+HALO_REVIEW_MAX_SOURCE_CHARS="${HALO_REVIEW_MAX_SOURCE_CHARS:-14000}"
 HALO_TTS_CONNECT_TIMEOUT="${HALO_TTS_CONNECT_TIMEOUT:-3}"
 HALO_TTS_MAX_TIME_INSTANT="${HALO_TTS_MAX_TIME_INSTANT:-120}"
 HALO_TTS_MAX_TIME_STORY="${HALO_TTS_MAX_TIME_STORY:-180}"
+HALO_TTS_TAIL_FADE_MS="${HALO_TTS_TAIL_FADE_MS:-90}"
 HALO_TTS_TRAILING_SILENCE_MS="${HALO_TTS_TRAILING_SILENCE_MS:-450}"
-HALO_TTS_CACHE_FORMAT_VERSION="${HALO_TTS_CACHE_FORMAT_VERSION:-2}"
+HALO_TTS_CACHE_FORMAT_VERSION="${HALO_TTS_CACHE_FORMAT_VERSION:-4}"
 HALO_PLAYBACK_MODE="${HALO_PLAYBACK_MODE:-queue}"
 HALO_PLAYBACK_QUEUE_ENDPOINT="${HALO_PLAYBACK_QUEUE_ENDPOINT:-http://127.0.0.1:18080/api/tts/play}"
 HALO_PLAYBACK_QUEUE_CONNECT_TIMEOUT="${HALO_PLAYBACK_QUEUE_CONNECT_TIMEOUT:-2}"
@@ -59,6 +62,9 @@ HALO_AWARE_RELEVANT_HISTORY_LIMIT="${HALO_AWARE_RELEVANT_HISTORY_LIMIT:-3}"
 HALO_AWARE_SUMMARY_ENTRY_LIMIT="${HALO_AWARE_SUMMARY_ENTRY_LIMIT:-12}"
 HALO_AWARE_SUMMARY_MAX_CHARS="${HALO_AWARE_SUMMARY_MAX_CHARS:-1800}"
 HALO_SENSORY_PYTHON="${HALO_SENSORY_PYTHON:-python3}"
+HALO_STATE_BACKEND="${HALO_STATE_BACKEND:-sqlite}"
+HALO_STATE_PYTHON="${HALO_STATE_PYTHON:-python3}"
+HALO_STATE_ENABLE_DUAL_WRITE="${HALO_STATE_ENABLE_DUAL_WRITE:-0}"
 
 RENDER_ONLY=false
 READ_MODE=false
@@ -67,6 +73,8 @@ ALIAS_NAME_OVERRIDE=""
 LIST_STORIES_MODE=false
 STORYGEN_MODE=false
 STORYGEN_RENDER_CACHE_MODE=false
+REVIEW_MODE=false
+REVIEW_FILE=""
 AWARE_COMMAND_MODE=false
 AWARE_ACTION=""
 AWARE_TRIGGER_KIND=""
@@ -83,6 +91,8 @@ REQUEST_CLASS="${HALO_TTS_REQUEST_CLASS:-instant}"
 CACHE_CATEGORY="${HALO_TTS_CACHE_CATEGORY:-instant}"
 CACHE_BUNDLE_DIR="${HALO_TTS_CACHE_BUNDLE_DIR:-}"
 CACHE_BUCKET_DIR=""
+CACHE_INDEX_DIR=""
+CACHE_INDEX_FILE=""
 LATENCY_COMMAND_MODE=false
 LATENCY_JSON_MODE=false
 LATENCY_REQUEST_STARTED_MS=""
@@ -107,6 +117,8 @@ usage() {
     echo "       halo speak"
     echo "       halo read <story-name|filename.txt|/full/path/to/file.txt>"
     echo "       halo --render-only read <story-name|filename.txt|/full/path/to/file.txt>"
+    echo "       halo review <filename.txt|/full/path/to/file.txt>"
+    echo "       halo --render-only review <filename.txt|/full/path/to/file.txt>"
     echo "       halo list-stories"
     echo "       halo storygen [-mw max_words] [optional topic]"
     echo "       halo storygen -rc"
@@ -491,12 +503,50 @@ PY
     printf '%s\n' "$(story_bundle_dir "$story_hash")/playlist.txt"
 }
 
+story_slug_for_file() {
+    local story_file="$1"
+    PYTHONPATH="$HALO_SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 - "$story_file" <<'PY'
+import pathlib
+import sys
+
+from halo_cache import slugify_name
+
+path = pathlib.Path(sys.argv[1])
+print(slugify_name(path.stem), end='')
+PY
+}
+
+story_assembled_wav_for_story_file() {
+    local story_file="$1"
+    local manifest_path bundle_dir story_slug
+
+    manifest_path=$(story_manifest_path_for_story_file "$story_file") || return 1
+    bundle_dir=$(dirname "$manifest_path")
+    story_slug=$(story_slug_for_file "$story_file") || return 1
+    printf '%s\n' "${bundle_dir}/${story_slug}.wav"
+}
+
 story_single_cache_file_for_text() {
     local story_text="$1"
-    local cache_key
+    local cache_key index_file cache_path
 
-    cache_key=$(printf '%s\n%s\n%s' "$HALO_TTS_CACHE_FORMAT_VERSION" "$HALO_TTS_TRAILING_SILENCE_MS" "$story_text" | sha256sum | awk '{print $1}') || return 1
-    printf '%s\n' "$CACHE_DIR/story/single/${cache_key}.wav"
+    cache_key=$(printf '%s\n%s\n%s\n%s' "$HALO_TTS_CACHE_FORMAT_VERSION" "$HALO_TTS_TAIL_FADE_MS" "$HALO_TTS_TRAILING_SILENCE_MS" "$story_text" | sha256sum | awk '{print $1}') || return 1
+    index_file="$CACHE_DIR/story/single/index/${cache_key}.json"
+    if [ ! -s "$index_file" ]; then
+        return 1
+    fi
+    cache_path=$(PYTHONPATH="$HALO_SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 - "$index_file" <<'PY'
+import pathlib
+import sys
+
+from halo_cache import read_cache_index_file
+
+entry = read_cache_index_file(pathlib.Path(sys.argv[1]))
+print(entry.get('wav_path', ''), end='')
+PY
+) || return 1
+    [ -n "$cache_path" ] || return 1
+    printf '%s\n' "$cache_path"
 }
 
 story_file_is_cached() {
@@ -551,12 +601,72 @@ render_uncached_story_cache() {
 }
 
 configure_cache_paths() {
-    CACHE_KEY=$(printf '%s\n%s\n%s' "$HALO_TTS_CACHE_FORMAT_VERSION" "$HALO_TTS_TRAILING_SILENCE_MS" "$sentence" | sha256sum | awk '{print $1}')
+    CACHE_KEY=$(printf '%s\n%s\n%s\n%s' "$HALO_TTS_CACHE_FORMAT_VERSION" "$HALO_TTS_TAIL_FADE_MS" "$HALO_TTS_TRAILING_SILENCE_MS" "$sentence" | sha256sum | awk '{print $1}')
     CACHE_BUCKET_DIR=$(cache_bucket_dir_for_category)
     mkdir -p "$CACHE_BUCKET_DIR"
-    CACHE_FILE="${CACHE_BUCKET_DIR}/${CACHE_KEY}.wav"
-    TEXT_FILE="${CACHE_BUCKET_DIR}/${CACHE_KEY}.txt"
-    ALIAS_TEXT_FILE=""
+    CACHE_INDEX_DIR="${CACHE_BUCKET_DIR}/index"
+    mkdir -p "$CACHE_INDEX_DIR"
+    CACHE_INDEX_FILE="${CACHE_INDEX_DIR}/${CACHE_KEY}.json"
+    CACHE_FILE=$(resolve_cached_audio_path "$CACHE_INDEX_FILE" "$CACHE_BUCKET_DIR") || CACHE_FILE=""
+    if [ -z "$CACHE_FILE" ]; then
+        CACHE_FILE="$(new_cache_audio_path "$CACHE_BUCKET_DIR")"
+    fi
+}
+
+resolve_cached_audio_path() {
+    local index_file="$1"
+    local fallback_dir="$2"
+    PYTHONPATH="$HALO_SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 - "$index_file" "$fallback_dir" <<'PY'
+import pathlib
+import sys
+
+from halo_cache import read_cache_index_file
+
+index_file = pathlib.Path(sys.argv[1])
+fallback_dir = pathlib.Path(sys.argv[2])
+entry = read_cache_index_file(index_file)
+wav_path = entry.get('wav_path')
+if not wav_path:
+    raise SystemExit(1)
+path = pathlib.Path(wav_path)
+if not path.is_absolute():
+    path = fallback_dir / path
+if not path.is_file() or path.stat().st_size == 0:
+    raise SystemExit(1)
+print(str(path), end='')
+PY
+}
+
+new_cache_audio_path() {
+    local cache_dir="$1"
+    PYTHONPATH="$HALO_SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 - "$cache_dir" <<'PY'
+import pathlib
+import sys
+
+from halo_cache import new_guid_wav_path
+
+print(new_guid_wav_path(pathlib.Path(sys.argv[1])), end='')
+PY
+}
+
+write_cache_index_entry() {
+    local index_file="$1"
+    local wav_file="$2"
+    local source_text="$3"
+    PYTHONPATH="$HALO_SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 - "$index_file" "$wav_file" "$source_text" <<'PY'
+import pathlib
+import sys
+
+from halo_cache import write_cache_index_file
+
+write_cache_index_file(
+    pathlib.Path(sys.argv[1]),
+    {
+        'wav_path': sys.argv[2],
+        'text': sys.argv[3],
+    },
+)
+PY
 }
 
 tts_service_available() {
@@ -636,16 +746,6 @@ queue_playback_service_available() {
     curl -s --connect-timeout "$HALO_PLAYBACK_QUEUE_CONNECT_TIMEOUT" --max-time "$HALO_PLAYBACK_QUEUE_CONNECT_TIMEOUT" "$health_endpoint" >/dev/null 2>&1
 }
 
-resolve_cached_text_for_audio_file() {
-    local audio_file="$1"
-    local text_file
-
-    text_file="${audio_file%.wav}.txt"
-    if [ -s "$text_file" ]; then
-        cat "$text_file"
-    fi
-}
-
 queue_audio_file_for_playback() {
     local audio_file="$1"
     local spoken_text="$2"
@@ -657,11 +757,7 @@ queue_audio_file_for_playback() {
     fi
 
     if [ -z "$spoken_text" ]; then
-        spoken_text=$(resolve_cached_text_for_audio_file "$audio_file")
-    fi
-
-    if [ -z "$spoken_text" ]; then
-        echo "  Error: No companion text metadata found for queued playback: $audio_file" >&2
+        echo "  Error: No spoken text provided for queued playback: $audio_file" >&2
         return 1
     fi
 
@@ -748,18 +844,18 @@ play_audio_file() {
 
 story_playlist_is_complete() {
     local manifest_path="$1"
-    local cache_path text_path
+    local cache_path
 
     if [ ! -s "$manifest_path" ]; then
         return 1
     fi
 
-    while IFS= read -r cache_path; do
+    while IFS= read -r manifest_line; do
+        cache_path=$(printf '%s\n' "$manifest_line" | cut -f1)
         if [ -z "$cache_path" ]; then
             return 1
         fi
-        text_path="${cache_path%.wav}.txt"
-        if [ ! -s "$cache_path" ] || [ ! -s "$text_path" ]; then
+        if [ ! -s "$cache_path" ]; then
             return 1
         fi
     done < "$manifest_path"
@@ -769,12 +865,14 @@ story_playlist_is_complete() {
 
 play_story_playlist() {
     local manifest_path="$1"
-    local total_chunks current_chunk cache_path
+    local total_chunks current_chunk cache_path chunk_text manifest_line
 
     total_chunks=$(wc -l < "$manifest_path" | tr -d ' ')
     current_chunk=0
 
-    while IFS= read -r cache_path; do
+    while IFS= read -r manifest_line; do
+        cache_path=$(printf '%s\n' "$manifest_line" | cut -f1)
+        chunk_text=$(printf '%s\n' "$manifest_line" | cut -f2-)
         if [ -z "$cache_path" ]; then
             continue
         fi
@@ -782,25 +880,76 @@ play_story_playlist() {
         if [ "${HALO_INTERNAL_READ_CHILD:-0}" != "1" ] && [ "$total_chunks" -gt 1 ]; then
             echo "  Playing story segment ${current_chunk}/${total_chunks}..."
         fi
-        play_audio_file "$cache_path" || return 1
+        play_audio_file "$cache_path" "$chunk_text" || return 1
     done < "$manifest_path"
 
     return 0
 }
 
+assemble_story_bundle_wav() {
+    local manifest_path="$1"
+    local assembled_wav="$2"
+    local lock_file temp_file
+
+    if [ ! -s "$manifest_path" ]; then
+        return 0
+    fi
+
+    mkdir -p "$(dirname "$assembled_wav")"
+    lock_file="${assembled_wav}.lock"
+    temp_file="${assembled_wav}.tmp"
+
+    if ! mkdir "$lock_file" 2>/dev/null; then
+        return 0
+    fi
+
+    PYTHONPATH="$HALO_SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 - "$manifest_path" "$temp_file" <<'PY'
+import pathlib
+import sys
+
+from halo_cache import assemble_wav_playlist
+
+assemble_wav_playlist(pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]))
+PY
+    local assemble_status=$?
+    if [ $assemble_status -eq 0 ] && [ -s "$temp_file" ]; then
+        mv "$temp_file" "$assembled_wav"
+    else
+        rm -f "$temp_file"
+    fi
+    rmdir "$lock_file" 2>/dev/null || true
+    return $assemble_status
+}
+
+schedule_story_bundle_assembly() {
+    local story_file="$1"
+    local manifest_path="$2"
+    local assembled_wav
+
+    assembled_wav=$(story_assembled_wav_for_story_file "$story_file") || return 1
+    if [ -s "$assembled_wav" ]; then
+        return 0
+    fi
+
+    HALO_INTERNAL_ASSEMBLE_CHILD=1 nohup bash "$HALO_SELF" __assemble-story-bundle "$manifest_path" "$assembled_wav" >/dev/null 2>&1 &
+}
+
 append_trailing_silence() {
     local wav_file="$1"
     local silence_ms="$2"
+    local fade_ms="${3:-0}"
 
-    python3 - "$wav_file" "$silence_ms" <<'PY'
+    python3 - "$wav_file" "$silence_ms" "$fade_ms" <<'PY'
 import pathlib
+import struct
 import sys
 import wave
 
 wav_path = pathlib.Path(sys.argv[1])
 silence_ms = int(sys.argv[2])
+fade_ms = int(sys.argv[3])
 
-if silence_ms <= 0:
+if silence_ms <= 0 and fade_ms <= 0:
     raise SystemExit(0)
 
 with wave.open(str(wav_path), 'rb') as source:
@@ -808,9 +957,57 @@ with wave.open(str(wav_path), 'rb') as source:
     frames = source.readframes(source.getnframes())
 
 frame_rate = params.framerate
-frame_width = params.sampwidth * params.nchannels
-silence_frames = max(1, int(frame_rate * silence_ms / 1000))
-silence = b'\x00' * (silence_frames * frame_width)
+channels = params.nchannels
+sample_width = params.sampwidth
+frame_width = sample_width * channels
+
+
+def apply_tail_fade(raw_frames: bytes) -> bytes:
+    if fade_ms <= 0 or not raw_frames:
+        return raw_frames
+
+    format_map = {
+        1: ('B', 0, 255, 128),
+        2: ('h', -32768, 32767, 0),
+        4: ('i', -2147483648, 2147483647, 0),
+    }
+    format_info = format_map.get(sample_width)
+    if format_info is None:
+        return raw_frames
+
+    sample_format, sample_min, sample_max, bias = format_info
+    total_frames = len(raw_frames) // frame_width
+    fade_frames = min(total_frames, max(1, int(frame_rate * fade_ms / 1000)))
+    if fade_frames <= 0:
+        return raw_frames
+
+    total_samples = total_frames * channels
+    unpack_format = '<' + (sample_format * total_samples)
+    samples = list(struct.unpack(unpack_format, raw_frames))
+    start_frame = total_frames - fade_frames
+
+    for frame_index in range(start_frame, total_frames):
+        remaining = total_frames - frame_index - 1
+        scale = remaining / fade_frames
+        for channel_index in range(channels):
+            sample_index = frame_index * channels + channel_index
+            sample_value = samples[sample_index]
+            if bias:
+                centered = sample_value - bias
+                faded = int(round(centered * scale)) + bias
+                samples[sample_index] = max(sample_min, min(sample_max, faded))
+            else:
+                faded = int(round(sample_value * scale))
+                samples[sample_index] = max(sample_min, min(sample_max, faded))
+
+    return struct.pack(unpack_format, *samples)
+
+frames = apply_tail_fade(frames)
+
+silence = b''
+if silence_ms > 0:
+    silence_frames = max(1, int(frame_rate * silence_ms / 1000))
+    silence = b'\x00' * (silence_frames * frame_width)
 
 with wave.open(str(wav_path), 'wb') as target:
     target.setparams(params)
@@ -862,6 +1059,10 @@ ensure_storygen_dirs() {
     mkdir -p "$STORY_DIR" "$STATE_DIR" "$QUEUE_PENDING_DIR" "$QUEUE_PROCESSING_DIR" "$QUEUE_DONE_DIR" "$QUEUE_FAILED_DIR"
 }
 
+review_notice() {
+    printf '%s\n' "$*" >&2
+}
+
 load_storygen_env() {
     local env_file
     env_file="${HALO_STORYGEN_ENV_FILE:-$STORYGEN_ENV_FILE_DEFAULT}"
@@ -875,6 +1076,43 @@ load_storygen_env() {
 
 aware_notice() {
     printf '%s\n' "$*" >&2
+}
+
+state_backend_is_postgres_only() {
+    [ "$HALO_STATE_BACKEND" = "postgres" ]
+}
+
+state_backend_dual_write() {
+    [ "$HALO_STATE_ENABLE_DUAL_WRITE" = "1" ]
+}
+
+state_backend_uses_postgres() {
+    state_backend_is_postgres_only || state_backend_dual_write
+}
+
+resolve_halo_state_python() {
+    local candidate
+    for candidate in "${HALO_STATE_PYTHON:-}" python3 python.exe py.exe python; do
+        if [ -z "$candidate" ]; then
+            continue
+        fi
+        if ! command -v "$candidate" >/dev/null 2>&1; then
+            continue
+        fi
+        if "$candidate" -c 'import psycopg' >/dev/null 2>&1; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+
+    echo "Error: no usable Python interpreter with psycopg is available for HAL state operations." >&2
+    return 1
+}
+
+halo_state_cli() {
+    local state_python
+    state_python=$(resolve_halo_state_python) || return 1
+    PYTHONPATH="$HALO_SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" "$state_python" -m halo_state.cli "$@"
 }
 
 ensure_aware_mode_file() {
@@ -1025,6 +1263,16 @@ show_aware_status() {
     summary_file="${HALO_AWARE_SUMMARY_FILE:-$AWARE_SUMMARY_FILE_DEFAULT}"
     output_dir="${HALO_AWARE_OUTPUT_DIR:-$AWARE_OUTPUT_DIR_DEFAULT}"
     ensure_aware_dirs
+
+    if state_backend_uses_postgres; then
+        halo_state_cli aware-status \
+            --state-file "$state_file" \
+            --memory-db "$memory_db" \
+            --summary-file "$summary_file" \
+            --trigger-file "$trigger_file" \
+            --output-dir "$output_dir"
+        return $?
+    fi
 
     python3 - "$state_file" "$memory_db" "$summary_file" "$trigger_file" "$output_dir" <<'PY'
 import json
@@ -1201,6 +1449,16 @@ select_aware_memory_context() {
     summary_file="${HALO_AWARE_SUMMARY_FILE:-$AWARE_SUMMARY_FILE_DEFAULT}"
     ensure_aware_dirs
 
+    if state_backend_uses_postgres; then
+        halo_state_cli select-context \
+            --kind "$kind" \
+            --topic "$topic" \
+            --trigger-source "$trigger_source" \
+            --recent-limit "$HALO_AWARE_RECENT_HISTORY_LIMIT" \
+            --relevant-limit "$HALO_AWARE_RELEVANT_HISTORY_LIMIT"
+        return $?
+    fi
+
     python3 - "$memory_db" "$summary_file" "$kind" "$topic" "$trigger_source" "$HALO_AWARE_RECENT_HISTORY_LIMIT" "$HALO_AWARE_RELEVANT_HISTORY_LIMIT" <<'PY'
 import json
 import pathlib
@@ -1297,6 +1555,14 @@ refresh_aware_summary() {
     memory_db="${HALO_AWARE_MEMORY_DB:-$AWARE_MEMORY_DB_DEFAULT}"
     summary_file="${HALO_AWARE_SUMMARY_FILE:-$AWARE_SUMMARY_FILE_DEFAULT}"
     ensure_aware_dirs
+
+    if state_backend_uses_postgres; then
+        halo_state_cli refresh-summary \
+            --summary-file "$summary_file" \
+            --entry-limit "$HALO_AWARE_SUMMARY_ENTRY_LIMIT" \
+            --max-chars "$HALO_AWARE_SUMMARY_MAX_CHARS"
+        return $?
+    fi
 
     python3 - "$memory_db" "$summary_file" "$HALO_AWARE_SUMMARY_ENTRY_LIMIT" "$HALO_AWARE_SUMMARY_MAX_CHARS" <<'PY'
 import pathlib
@@ -1511,9 +1777,22 @@ record_aware_output() {
     local trigger_id="$4"
     local text="$5"
     local artifact_path="$6"
-    local memory_db
+    local memory_db state_text_b64 status
     memory_db="${HALO_AWARE_MEMORY_DB:-$AWARE_MEMORY_DB_DEFAULT}"
     ensure_aware_dirs
+
+    if state_backend_is_postgres_only; then
+        state_text_b64=$(printf '%s' "$text" | python3 -c 'import base64, sys; print(base64.b64encode(sys.stdin.buffer.read()).decode("ascii"), end="")') || return 1
+        halo_state_cli record-aware-output \
+            --kind "$kind" \
+            --topic "$topic" \
+            --trigger-source "$trigger_source" \
+            --trigger-id "$trigger_id" \
+            --artifact-path "$artifact_path" \
+            --text-base64 "$state_text_b64"
+        status=$?
+        return $status
+    fi
 
     HALO_AWARE_OUTPUT_TEXT="$text" python3 - "$memory_db" "$kind" "$topic" "$trigger_source" "$trigger_id" "$artifact_path" <<'PY'
 import datetime
@@ -1585,6 +1864,19 @@ connection.execute(
 connection.commit()
 connection.close()
 PY
+
+    if state_backend_dual_write; then
+        state_text_b64=$(printf '%s' "$text" | python3 -c 'import base64, sys; print(base64.b64encode(sys.stdin.buffer.read()).decode("ascii"), end="")') || return 1
+        halo_state_cli record-aware-output \
+            --kind "$kind" \
+            --topic "$topic" \
+            --trigger-source "$trigger_source" \
+            --trigger-id "$trigger_id" \
+            --artifact-path "$artifact_path" \
+            --text-base64 "$state_text_b64"
+        status=$?
+        [ $status -eq 0 ] || return $status
+    fi
 }
 
 evaluate_aware_triggers() {
@@ -1592,6 +1884,11 @@ evaluate_aware_triggers() {
     trigger_file="${HALO_AWARE_TRIGGER_CONFIG:-$AWARE_TRIGGER_CONFIG_DEFAULT}"
     memory_db="${HALO_AWARE_MEMORY_DB:-$AWARE_MEMORY_DB_DEFAULT}"
     ensure_aware_dirs
+
+    if state_backend_uses_postgres; then
+        halo_state_cli evaluate-triggers --trigger-file "$trigger_file"
+        return $?
+    fi
 
     python3 - "$trigger_file" "$memory_db" <<'PY'
 import datetime
@@ -2022,22 +2319,206 @@ resolve_story_file() {
     return 1
 }
 
+resolve_review_file() {
+    local candidate="$1"
+    if [ -f "$candidate" ] && [[ "$candidate" == *.txt ]]; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+    return 1
+}
+
+review_source_rejection() {
+    printf 'source material rejection\n'
+    return 1
+}
+
+prepare_review_source_payload() {
+    local review_file="$1"
+    PYTHONPATH="$HALO_SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 - "$review_file" "$HALO_REVIEW_MAX_SOURCE_CHARS" <<'PY'
+import json
+import pathlib
+import sys
+
+from halo_review import prepare_review_source
+
+payload = prepare_review_source(pathlib.Path(sys.argv[1]), max_chars=int(sys.argv[2]))
+print(json.dumps(payload))
+PY
+}
+
+build_review_precheck_prompts() {
+    local review_payload="$1"
+    HALO_REVIEW_SOURCE_PAYLOAD="$review_payload" \
+    PYTHONPATH="$HALO_SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 - <<'PY'
+import json
+import os
+
+from halo_review import build_review_precheck_prompts
+
+payload = json.loads(os.environ['HALO_REVIEW_SOURCE_PAYLOAD'])
+prompts = build_review_precheck_prompts(payload)
+print(json.dumps(prompts))
+PY
+}
+
+parse_review_precheck_decision() {
+    local decision_text="$1"
+    HALO_REVIEW_PRECHECK_TEXT="$decision_text" \
+    PYTHONPATH="$HALO_SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 - <<'PY'
+import os
+
+from halo_review import parse_review_precheck_decision
+
+print(parse_review_precheck_decision(os.environ['HALO_REVIEW_PRECHECK_TEXT']), end='')
+PY
+}
+
+review_source_is_allowed() {
+    local review_payload="$1" prompt_payload system_prompt user_prompt decision_raw decision
+
+    if [ -n "${HALO_REVIEW_PRECHECK_MOCK_DECISION:-}" ]; then
+        decision=$(parse_review_precheck_decision "$HALO_REVIEW_PRECHECK_MOCK_DECISION") || return 1
+        [ "$decision" = "pass" ]
+        return $?
+    fi
+
+    prompt_payload=$(build_review_precheck_prompts "$review_payload") || return 1
+    system_prompt=$(printf '%s' "$prompt_payload" | python3 -c 'import json, sys; print(json.load(sys.stdin)["system_prompt"], end="")') || return 1
+    user_prompt=$(printf '%s' "$prompt_payload" | python3 -c 'import json, sys; print(json.load(sys.stdin)["user_prompt"], end="")') || return 1
+    decision_raw=$(generate_openai_text "$system_prompt" "$user_prompt" 120) || return 1
+    decision=$(parse_review_precheck_decision "$decision_raw") || return 1
+    [ "$decision" = "pass" ]
+}
+
+build_review_runtime_context() {
+    local review_file="$1"
+    local host_name
+    host_name=$(hostname 2>/dev/null || echo unknown)
+    cat <<EOF
+HAL review mode is active.
+Current UTC timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+System host: ${host_name}
+Source file: $(basename "$review_file")
+EOF
+}
+
+build_review_prompts() {
+    local review_payload="$1"
+    local runtime_context="$2"
+    local persona_text
+
+    persona_text=$(load_aware_persona) || return 1
+
+    HALO_REVIEW_PERSONA_TEXT="$persona_text" \
+    HALO_REVIEW_SOURCE_PAYLOAD="$review_payload" \
+    HALO_REVIEW_RUNTIME_CONTEXT="$runtime_context" \
+    PYTHONPATH="$HALO_SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 - <<'PY'
+import json
+import os
+
+from halo_review import build_review_prompts
+
+persona = os.environ['HALO_REVIEW_PERSONA_TEXT']
+payload = json.loads(os.environ['HALO_REVIEW_SOURCE_PAYLOAD'])
+runtime_context = os.environ['HALO_REVIEW_RUNTIME_CONTEXT']
+prompts = build_review_prompts(persona, payload, runtime_context)
+print(json.dumps(prompts))
+PY
+}
+
+generate_review_text() {
+    local review_file="$1"
+    local review_payload prompt_payload system_prompt user_prompt runtime_context
+
+    review_payload=$(prepare_review_source_payload "$review_file") || return 1
+    if ! review_source_is_allowed "$review_payload"; then
+        review_source_rejection
+        return 1
+    fi
+
+    runtime_context=$(build_review_runtime_context "$review_file")
+    prompt_payload=$(build_review_prompts "$review_payload" "$runtime_context") || return 1
+    system_prompt=$(printf '%s' "$prompt_payload" | python3 -c 'import json, sys; print(json.load(sys.stdin)["system_prompt"], end="")') || return 1
+    user_prompt=$(printf '%s' "$prompt_payload" | python3 -c 'import json, sys; print(json.load(sys.stdin)["user_prompt"], end="")') || return 1
+    generate_openai_text "$system_prompt" "$user_prompt" 180
+}
+
+store_review_output_artifact() {
+    local source_file="$1"
+    local review_text="$2"
+    local output_dir
+    output_dir="${HALO_REVIEW_OUTPUT_DIR:-$REVIEW_OUTPUT_DIR_DEFAULT}"
+    mkdir -p "$output_dir"
+
+    HALO_REVIEW_ARTIFACT_TEXT="$review_text" python3 - "$output_dir" "$source_file" <<'PY'
+import datetime
+import os
+import pathlib
+import re
+import sys
+import unicodedata
+
+output_dir = pathlib.Path(sys.argv[1])
+source_file = pathlib.Path(sys.argv[2])
+text = os.environ['HALO_REVIEW_ARTIFACT_TEXT'].strip()
+
+normalized = unicodedata.normalize('NFKD', source_file.stem)
+ascii_text = normalized.encode('ascii', 'ignore').decode('ascii')
+words = re.findall(r'[A-Za-z0-9]+', ascii_text.lower())
+slug = '-'.join(words[:5]) or 'review'
+stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+artifact_path = output_dir / f'{stamp}-review-{slug}.txt'
+artifact_path.write_text(text + '\n', encoding='utf-8')
+print(str(artifact_path))
+PY
+}
+
+handle_review() {
+    local review_path review_text artifact_path playback_result
+
+    review_path=$(resolve_review_file "$REVIEW_FILE") || {
+        review_source_rejection
+        return 1
+    }
+
+    load_storygen_env
+    review_text=$(generate_review_text "$review_path") || return 1
+    artifact_path=$(store_review_output_artifact "$review_path" "$review_text") || return 1
+
+    review_notice "HALO review requested"
+    review_notice "  Source: $review_path"
+    review_notice "  Review artifact: $artifact_path"
+
+    if [ "$RENDER_ONLY" = true ]; then
+        HALO_TTS_REQUEST_CLASS=story bash "$HALO_SELF" --render-only read "$artifact_path"
+        return $?
+    fi
+
+    HALO_TTS_REQUEST_CLASS=story bash "$HALO_SELF" read "$artifact_path"
+    playback_result=$?
+    return $playback_result
+}
+
 list_stories() {
     mkdir -p "$STORY_DIR"
-    python3 - "$STORY_DIR" "$STORYGEN_PROMPT_FILE_DEFAULT" "$CACHE_DIR" "$HALO_TTS_CACHE_FORMAT_VERSION" "$HALO_TTS_TRAILING_SILENCE_MS" "$HALO_STORY_READ_MAX_CHARS" "$HALO_STORY_READ_MAX_WORDS" <<'PY'
+    python3 - "$STORY_DIR" "$STORYGEN_PROMPT_FILE_DEFAULT" "$CACHE_DIR" "$HALO_TTS_CACHE_FORMAT_VERSION" "$HALO_TTS_TAIL_FADE_MS" "$HALO_TTS_TRAILING_SILENCE_MS" "$HALO_STORY_READ_MAX_CHARS" "$HALO_STORY_READ_MAX_WORDS" <<'PY'
 import hashlib
 import datetime
 import pathlib
 import re
 import sys
 
+from halo_cache import read_cache_index_file
+
 story_dir = pathlib.Path(sys.argv[1])
 prompt_name = pathlib.Path(sys.argv[2]).name
 cache_dir = pathlib.Path(sys.argv[3])
 cache_format_version = sys.argv[4]
-trailing_silence_ms = sys.argv[5]
-max_chars = int(sys.argv[6])
-max_words = int(sys.argv[7])
+tail_fade_ms = sys.argv[5]
+trailing_silence_ms = sys.argv[6]
+max_chars = int(sys.argv[7])
+max_words = int(sys.argv[8])
 
 
 def normalize_text(path: pathlib.Path) -> str:
@@ -2051,9 +2532,12 @@ def story_requires_chunking(text: str) -> bool:
 
 def single_story_cache_exists(text: str) -> bool:
     cache_key = hashlib.sha256(
-        f'{cache_format_version}\n{trailing_silence_ms}\n{text}'.encode('utf-8')
+        f'{cache_format_version}\n{tail_fade_ms}\n{trailing_silence_ms}\n{text}'.encode('utf-8')
     ).hexdigest()
-    return (cache_dir / 'story' / 'single' / f'{cache_key}.wav').is_file()
+    index_path = cache_dir / 'story' / 'single' / 'index' / f'{cache_key}.json'
+    entry = read_cache_index_file(index_path)
+    wav_path = entry.get('wav_path')
+    return bool(wav_path and pathlib.Path(wav_path).is_file())
 
 
 def playlist_cache_exists(text: str) -> bool:
@@ -2063,7 +2547,7 @@ def playlist_cache_exists(text: str) -> bool:
         return False
 
     for line in manifest_path.read_text(encoding='utf-8').splitlines():
-        candidate = line.strip()
+        candidate = line.split('\t', 1)[0].strip()
         if not candidate:
             return False
         if not pathlib.Path(candidate).is_file():
@@ -2248,7 +2732,7 @@ PY
 
 render_story_in_chunks() {
     local story_file="$1"
-    local story_hash bundle_dir chunk_dir manifest_path manifest_tmp chunk_file chunk_text cache_path chunk_count chunk_render_started_ms chunk_route_file observed_route
+    local story_hash bundle_dir chunk_dir manifest_path manifest_tmp chunk_file chunk_text cache_path chunk_count chunk_render_started_ms chunk_route_file observed_route manifest_text
 
     story_hash=$(python3 - "$story_file" <<'PY'
 import hashlib
@@ -2267,6 +2751,7 @@ PY
     manifest_tmp="${manifest_path}.tmp"
 
     if story_playlist_is_complete "$manifest_path"; then
+        schedule_story_bundle_assembly "$story_file" "$manifest_path" || true
         if [ "$RENDER_ONLY" = true ]; then
             printf '%s\n' "$manifest_path"
         else
@@ -2324,7 +2809,8 @@ PY
         rm -f "$chunk_route_file"
         LATENCY_RENDER_ROUTE=$(merge_render_route_label "$LATENCY_RENDER_ROUTE" "$observed_route")
         LATENCY_RENDER_REQUEST_MS="$(( ${LATENCY_RENDER_REQUEST_MS:-0} + $(safe_duration_ms "$chunk_render_started_ms" "$(now_ms)") ))"
-        printf '%s\n' "$cache_path" >> "$manifest_tmp"
+        manifest_text=$(printf '%s' "$chunk_text" | tr '\t\r\n' '   ')
+        printf '%s\t%s\n' "$cache_path" "$manifest_text" >> "$manifest_tmp"
 
         if [ "$RENDER_ONLY" = false ]; then
             play_audio_file "$cache_path" "$chunk_text" || {
@@ -2338,6 +2824,7 @@ PY
     rm -rf "$chunk_dir"
 
     mv "$manifest_tmp" "$manifest_path"
+    schedule_story_bundle_assembly "$story_file" "$manifest_path" || true
 
     if [ "$RENDER_ONLY" = true ]; then
         printf '%s\n' "$manifest_path"
@@ -2707,43 +3194,17 @@ handle_storygen() {
     fi
 }
 
-build_alias_text_file() {
-    local alias_base
-
-    if [ "$CACHE_CATEGORY" = "story-bundle" ] || [ -n "$CACHE_BUNDLE_DIR" ]; then
-        ALIAS_TEXT_FILE=""
-        return 0
-    fi
-
-    alias_base=$(python3 -c 'import re, sys, unicodedata; text = unicodedata.normalize("NFKD", sys.argv[1]); text = text.encode("ascii", "ignore").decode("ascii"); words = re.findall(r"[A-Za-z0-9]+", text); base = "_".join(words) or "text"; print(base[:120])' "${ALIAS_NAME_OVERRIDE:-$sentence}")
-    if [ -z "$alias_base" ]; then
-        alias_base="text"
-    fi
-    ALIAS_TEXT_FILE="${CACHE_BUCKET_DIR}/${alias_base}.txt"
-    if [ -e "$ALIAS_TEXT_FILE" ] && [ "$(tr -d '\r\n' < "$ALIAS_TEXT_FILE" 2>/dev/null)" != "${CACHE_KEY}.wav" ]; then
-        ALIAS_TEXT_FILE="${CACHE_BUCKET_DIR}/${alias_base}__${CACHE_KEY:0:12}.txt"
-    fi
-}
-
-sync_mapping_mtime() {
-    if [ -s "$CACHE_FILE" ]; then
-        touch -r "$CACHE_FILE" "$TEXT_FILE" 2>/dev/null || true
-        if [ -n "$ALIAS_TEXT_FILE" ] && [ -e "$ALIAS_TEXT_FILE" ]; then
-            touch -r "$CACHE_FILE" "$ALIAS_TEXT_FILE" 2>/dev/null || true
-        fi
-    fi
-}
-
 ensure_cache_mappings() {
     mkdir -p "$CACHE_BUCKET_DIR"
-    if [ ! -s "$TEXT_FILE" ]; then
-        printf '%s\n' "$sentence" > "$TEXT_FILE"
-    fi
-    build_alias_text_file
-    if [ -n "$ALIAS_TEXT_FILE" ] && [ ! -s "$ALIAS_TEXT_FILE" ]; then
-        printf '%s\n' "${CACHE_KEY}.wav" > "$ALIAS_TEXT_FILE"
-    fi
-    sync_mapping_mtime
+    mkdir -p "$CACHE_INDEX_DIR"
+    write_cache_index_entry "$CACHE_INDEX_FILE" "$CACHE_FILE" "$sentence"
+}
+
+run_story_bundle_assembly_child() {
+    local manifest_path="$1"
+    local assembled_wav="$2"
+
+    assemble_story_bundle_wav "$manifest_path" "$assembled_wav"
 }
 
 if [ "${1:-}" = "--render-only" ]; then
@@ -2775,6 +3236,13 @@ if [ "$LATENCY_COMMAND_MODE" != true ] && [ $# -eq 0 ]; then
 fi
 
 case "$1" in
+    __assemble-story-bundle)
+        if [ $# -ne 3 ]; then
+            exit 1
+        fi
+        run_story_bundle_assembly_child "$2" "$3"
+        exit $?
+        ;;
     sensory)
         SENSORY_COMMAND_MODE=true
         shift
@@ -2864,6 +3332,14 @@ case "$1" in
         ALIAS_NAME_OVERRIDE=$(basename "$READ_FILE")
         ALIAS_NAME_OVERRIDE="${ALIAS_NAME_OVERRIDE%.*}"
         ;;
+    review)
+        REVIEW_MODE=true
+        if [ $# -ne 2 ] || [ -z "${2:-}" ]; then
+            usage
+            exit 1
+        fi
+        REVIEW_FILE="$2"
+        ;;
     speak)
         COMMENTARY_FILE="${HALO_COMMENTARY_FILE:-${HALO_ROOT}/commentary/manic-hal-lines.txt}"
         if [ $# -ne 1 ]; then
@@ -2920,6 +3396,11 @@ fi
 
 if [ "$AWARE_COMMAND_MODE" = true ]; then
     handle_aware_command
+    exit $?
+fi
+
+if [ "$REVIEW_MODE" = true ]; then
+    handle_review
     exit $?
 fi
 
@@ -3041,7 +3522,7 @@ if [[ ! "$FILE_TYPE" =~ WAV|RIFF|audio ]]; then
     exit 1
 fi
 
-append_trailing_silence "$TMPFILE" "$HALO_TTS_TRAILING_SILENCE_MS"
+append_trailing_silence "$TMPFILE" "$HALO_TTS_TRAILING_SILENCE_MS" "$HALO_TTS_TAIL_FADE_MS"
 
 if ! cp "$TMPFILE" "$CACHE_FILE"; then
     rm -f "$TMPFILE" "$CACHE_FILE"

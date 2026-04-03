@@ -23,7 +23,9 @@ func createMockTTSServer() *httptest.Server {
 		
 		// Minimal WAV header + data
 		wavData := []byte("RIFFDWAVEfmt data" + strings.Repeat("mock_audio_data", 100))
-		w.Write(wavData)
+		if _, err := w.Write(wavData); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
 	}))
 }
 

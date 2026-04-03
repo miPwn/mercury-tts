@@ -34,6 +34,8 @@ halo /?
 halo speak
 halo read <story-name|filename.txt|/full/path/to/file.txt>
 halo --render-only read <story-name|filename.txt|/full/path/to/file.txt>
+halo review <filename.txt|/full/path/to/file.txt>
+halo --render-only review <filename.txt|/full/path/to/file.txt>
 halo list-stories
 halo storygen [-mw max_words] [optional topic]
 halo storygen -rc
@@ -54,6 +56,8 @@ The most common operator flows are:
 - commentary sample: `halo speak`
 - read a story with playback: `halo read story-name`
 - render a story into cache only: `halo --render-only read story-name`
+- have HAL review a text file in character: `halo review ./notes/essay.txt`
+- render a HAL review into cache only: `halo --render-only review ./notes/essay.txt`
 - inspect recent latency data: `halo -l`
 - list story files and cache status: `halo list-stories`
 - generate and immediately queue a new story request: `halo storygen`
@@ -178,11 +182,12 @@ Latency snapshots label playback as one of:
 
 ## Cache Design
 
-Cache keys include both format versioning and trailing-silence tuning so older WAVs are not silently reused after format changes.
+Cache lookup keys include both format versioning and trailing-silence tuning so older WAVs are not silently reused after format changes.
 
 Important variables:
 
 - `HALO_TTS_CACHE_FORMAT_VERSION`
+- `HALO_TTS_TAIL_FADE_MS`
 - `HALO_TTS_TRAILING_SILENCE_MS`
 
 Cache layout:
@@ -192,7 +197,13 @@ Cache layout:
 - single-file story renders: `cache/halo-xtts/story/single/`
 - chunked story bundles: `cache/halo-xtts/story/bundles/<story-hash>/`
 
-Chunked story bundle directories contain the playlist manifest plus the individual chunk WAV and text pairs for one story.
+Naming policy:
+
+- cached instant, commentary, and chunk WAV files use GUID filenames
+- assembled bundle WAV files use slugs derived from the story filename
+- cache lookup is maintained through per-bucket index files rather than `.txt` sidecars
+
+Chunked story bundle directories contain the playlist manifest, the individual chunk WAV files, and a background-built assembled WAV for operator use.
 
 ## Story Reading And Generation
 
@@ -218,6 +229,8 @@ If a story exceeds either threshold, `halo` splits it into paragraphs and smalle
 - the story filename
 
 For chunked stories, a `YES` cache label means the playlist exists and every referenced WAV exists.
+
+Chunk playback still uses the per-chunk queue path. The assembled story WAV is a convenience artifact for operators and is not used by the playback queue.
 
 ### Story generation
 
@@ -283,6 +296,21 @@ State files live under `state/halo/` and include:
 - aware summary text
 - trigger configuration
 - aware output directory
+
+This file-backed and SQLite-backed model is the current implementation. The target replacement architecture for durable identity, episodic memory, imported learning material, and Qdrant-backed retrieval is documented in `docs/architecture/aware-state-system.md`, with the initial Postgres schema in `db/halo_state_postgres.sql` and sample runtime configuration in `config/halo-state.env.example`.
+
+State tooling now lives under `halo_state/` and can be called directly with `PYTHONPATH=. python3 -m halo_state.cli ...`.
+
+Useful commands:
+
+- `PYTHONPATH=. python3 -m halo_state.cli migrate-legacy-state --aware-db /path/to/aware-memory.sqlite3 --sensory-db /path/to/knowledge.sqlite3`
+- `PYTHONPATH=. python3 -m halo_state.cli migrate-legacy-state --commentary-db /path/to/commentary-history.sqlite3`
+- `PYTHONPATH=. python3 -m halo_state.cli ingest-learning-material`
+- `PYTHONPATH=. python3 -m halo_state.cli refresh-summary --summary-file /path/to/aware-summary.txt --entry-limit 12 --max-chars 1800`
+
+Python dependencies for the new state layer are listed in `requirements-state.txt`.
+
+For a local self-contained development stack, use `docker-compose.halo-state.yml` and `tools/bootstrap-halo-state.ps1`.
 
 ### Sensory
 
@@ -425,6 +453,7 @@ These are the main knobs worth knowing when operating the current system.
 ### Cache And Story Reads
 
 - `HALO_TTS_CACHE_FORMAT_VERSION`
+- `HALO_TTS_TAIL_FADE_MS`
 - `HALO_TTS_TRAILING_SILENCE_MS`
 - `HALO_STORY_READ_MAX_CHARS`
 - `HALO_STORY_READ_MAX_WORDS`
@@ -599,9 +628,10 @@ This fallback is intentional and required so speech still works when the queue s
 `halo` cache keys include both:
 
 - `HALO_TTS_CACHE_FORMAT_VERSION`
+- `HALO_TTS_TAIL_FADE_MS`
 - `HALO_TTS_TRAILING_SILENCE_MS`
 
-This prevents older cached WAV files without the trailing-silence mitigation from being reused after the cache format changes.
+This prevents older cached WAV files without the current tail smoothing and trailing-silence mitigation from being reused after the cache format changes.
 
 ### Cache layout
 

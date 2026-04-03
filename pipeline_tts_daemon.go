@@ -1,3 +1,6 @@
+//go:build tts_experimental
+// +build tts_experimental
+
 package main
 
 import (
@@ -12,7 +15,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
-	"sync"
 	"syscall"
 	"time"
 )
