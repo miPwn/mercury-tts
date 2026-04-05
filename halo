@@ -33,7 +33,26 @@ QUEUE_PROCESSING_DIR="${QUEUE_DIR}/processing"
 QUEUE_DONE_DIR="${QUEUE_DIR}/done"
 QUEUE_FAILED_DIR="${QUEUE_DIR}/failed"
 QUEUE_LOCK_DIR="${QUEUE_DIR}/lock"
-STORYGEN_PROMPT_FILE_DEFAULT="${STORY_DIR}/story-gen-prompt.txt"
+PROMPT_DIR_DEFAULT="${HALO_SCRIPT_DIR}/prompts/halo"
+HALO_PERSONA_PROMPT_FILE_DEFAULT="${PROMPT_DIR_DEFAULT}/halo-persona.txt"
+HALO_PERSONA_LEGACY_FILE_DEFAULT="${HALO_ROOT}/persona/hal-9000.txt"
+STORYGEN_PROMPT_FILE_DEFAULT="${PROMPT_DIR_DEFAULT}/storygen-system.txt"
+STORYGEN_USER_STORY_PROMPT_FILE_DEFAULT="${PROMPT_DIR_DEFAULT}/storygen-user-story.txt"
+STORYGEN_USER_PODCAST_PROMPT_FILE_DEFAULT="${PROMPT_DIR_DEFAULT}/storygen-user-podcast.txt"
+AWARE_SYSTEM_PROMPT_FILE_DEFAULT="${PROMPT_DIR_DEFAULT}/aware-system.txt"
+AWARE_KIND_COMMENTARY_PROMPT_FILE_DEFAULT="${PROMPT_DIR_DEFAULT}/aware-kind-commentary.txt"
+AWARE_KIND_OBSERVATION_PROMPT_FILE_DEFAULT="${PROMPT_DIR_DEFAULT}/aware-kind-observation.txt"
+AWARE_KIND_MONOLOGUE_PROMPT_FILE_DEFAULT="${PROMPT_DIR_DEFAULT}/aware-kind-monologue.txt"
+AWARE_KIND_STORY_PROMPT_FILE_DEFAULT="${PROMPT_DIR_DEFAULT}/aware-kind-story.txt"
+REVIEW_PRECHECK_SYSTEM_PROMPT_FILE_DEFAULT="${PROMPT_DIR_DEFAULT}/review-precheck-system.txt"
+REVIEW_PRECHECK_USER_PROMPT_FILE_DEFAULT="${PROMPT_DIR_DEFAULT}/review-precheck-user.txt"
+REVIEW_SYSTEM_PROMPT_FILE_DEFAULT="${PROMPT_DIR_DEFAULT}/review-system.txt"
+REVIEW_LENGTH_SHORT_PROMPT_FILE_DEFAULT="${PROMPT_DIR_DEFAULT}/review-length-short.txt"
+REVIEW_LENGTH_MEDIUM_PROMPT_FILE_DEFAULT="${PROMPT_DIR_DEFAULT}/review-length-medium.txt"
+REVIEW_LENGTH_LONG_PROMPT_FILE_DEFAULT="${PROMPT_DIR_DEFAULT}/review-length-long.txt"
+GENERATION_MEMORY_GUIDANCE_PROMPT_FILE_DEFAULT="${PROMPT_DIR_DEFAULT}/generation-memory-guidance.txt"
+GENERATION_MEMORY_SECTION_PROMPT_FILE_DEFAULT="${PROMPT_DIR_DEFAULT}/generation-memory-section.txt"
+CANON_CONTEXT_SECTION_PROMPT_FILE_DEFAULT="${PROMPT_DIR_DEFAULT}/canon-context-section.txt"
 STORYGEN_ENV_FILE_DEFAULT="${STATE_DIR}/storygen.env"
 AWARE_MODE_FILE_DEFAULT="${STATE_DIR}/aware-mode.json"
 AWARE_MEMORY_DB_DEFAULT="${STATE_DIR}/aware-memory.sqlite3"
@@ -41,7 +60,7 @@ AWARE_SUMMARY_FILE_DEFAULT="${STATE_DIR}/aware-summary.txt"
 AWARE_TRIGGER_CONFIG_DEFAULT="${STATE_DIR}/aware-triggers.json"
 AWARE_OUTPUT_DIR_DEFAULT="${STATE_DIR}/aware-output"
 REVIEW_OUTPUT_DIR_DEFAULT="${STATE_DIR}/review-output"
-AWARE_PERSONA_FILE_DEFAULT="${HALO_ROOT}/persona/hal-9000.txt"
+CANON_SUMMARY_FILE_DEFAULT="${HALO_SCRIPT_DIR}/reference/2001-originalscript-summary.txt"
 OPENAI_API_URL="${OPENAI_API_URL:-https://api.openai.com/v1/responses}"
 OPENAI_MODEL="${OPENAI_MODEL:-gpt-5.4}"
 HALO_STORYGEN_WAIT_SECONDS="${HALO_STORYGEN_WAIT_SECONDS:-600}"
@@ -69,6 +88,8 @@ HALO_AWARE_RECENT_HISTORY_LIMIT="${HALO_AWARE_RECENT_HISTORY_LIMIT:-6}"
 HALO_AWARE_RELEVANT_HISTORY_LIMIT="${HALO_AWARE_RELEVANT_HISTORY_LIMIT:-3}"
 HALO_AWARE_SUMMARY_ENTRY_LIMIT="${HALO_AWARE_SUMMARY_ENTRY_LIMIT:-12}"
 HALO_AWARE_SUMMARY_MAX_CHARS="${HALO_AWARE_SUMMARY_MAX_CHARS:-1800}"
+HALO_GENERATION_MEMORY_MAX_CHARS="${HALO_GENERATION_MEMORY_MAX_CHARS:-48000}"
+HALO_GENERATION_MEMORY_MAX_ENTRIES="${HALO_GENERATION_MEMORY_MAX_ENTRIES:-240}"
 HALO_SENSORY_PYTHON="${HALO_SENSORY_PYTHON:-python3}"
 HALO_STATE_BACKEND="${HALO_STATE_BACKEND:-sqlite}"
 HALO_STATE_PYTHON="${HALO_STATE_PYTHON:-python3}"
@@ -95,6 +116,8 @@ SENSORY_ACTION=""
 SENSORY_SENSOR="all"
 STORYGEN_TOPIC=""
 STORYGEN_MAX_WORDS=""
+STORYGEN_FORMAT="story"
+STORYGEN_PODCAST_MINUTES=""
 SENTENCE_INPUT=""
 REQUEST_CLASS="${HALO_TTS_REQUEST_CLASS:-instant}"
 CACHE_CATEGORY="${HALO_TTS_CACHE_CATEGORY:-instant}"
@@ -119,29 +142,343 @@ LATENCY_CHUNK_COUNT="1"
 LATENCY_TEXT_CHARS="0"
 
 usage() {
-    echo "Usage: halo 'your message here'"
-    echo "       halo -l [--json]"
-    echo "       halo --render-only 'sentence'"
-    echo "       halo /?"
-    echo "       halo speak"
-    echo "       halo read <story-name|filename.txt|/full/path/to/file.txt>"
-    echo "       halo --render-only read <story-name|filename.txt|/full/path/to/file.txt>"
-    echo "       halo review <name|filename.txt|/full/path/to/file.txt>"
-    echo "       halo --render-only review <name|filename.txt|/full/path/to/file.txt>"
-    echo "       halo list-stories"
-    echo "       halo vq"
-    echo "       halo storygen [-mw max_words] [optional topic]"
-    echo "       halo storygen -rc"
-    echo "       halo story-gen [-mw max_words] [optional topic]"
-    echo "       halo sg [-mw max_words] [optional topic]"
-    echo "       halo --render-only storygen [-mw max_words] [optional topic]"
-    echo "       storygen requests now enqueue and return a request id immediately"
-    echo "       halo aware on|off|status"
-    echo "       halo aware trigger [commentary|observation|monologue|story] [optional topic]"
-    echo "       halo aware tick"
-    echo "       halo sensory status"
-    echo "       halo sensory scan [host|network|photoprism|blink|all]"
-    echo "       halo sensory commentary [host|network|photoprism|blink|all]"
+        cat <<'EOF'
+HALO command client
+
+Usage:
+    halo 'your message here'
+    halo [command] [options]
+
+General:
+    halo /?
+    halo -l [--json]
+    halo vq
+    halo speak
+
+Playback and review:
+    halo read <story-name|filename.txt|/full/path/to/file.txt>
+    halo review <name|filename.txt|/full/path/to/file.txt>
+
+Generation:
+    halo storygen [-mw max_words | -pc minutes] [topic]
+    halo storygen -rc
+        aliases: halo story-gen, halo sg
+        notes: -mw and -pc are mutually exclusive; requests enqueue immediately
+
+Aware mode:
+    halo aware on|off|status
+    halo aware trigger [commentary|observation|monologue|story] [topic]
+    halo aware tick
+
+Sensory:
+    halo sensory status
+    halo sensory scan [host|network|photoprism|blink|all]
+    halo sensory commentary [host|network|photoprism|blink|all]
+
+Render-only variants:
+    halo --render-only 'sentence'
+    halo --render-only read <story-name|filename.txt|/full/path/to/file.txt>
+    halo --render-only review <name|filename.txt|/full/path/to/file.txt>
+    halo --render-only storygen [-mw max_words | -pc minutes] [topic]
+EOF
+}
+
+render_prompt_template() {
+    local template_file="$1"
+    shift
+
+    python3 - "$template_file" "$@" <<'PY'
+import pathlib
+import sys
+
+template_path = pathlib.Path(sys.argv[1])
+values = {}
+for item in sys.argv[2:]:
+    key, value = item.split('=', 1)
+    values[key] = value
+
+try:
+    template = template_path.read_text(encoding='utf-8')
+except FileNotFoundError:
+    raise SystemExit(f'missing prompt template: {template_path}')
+
+print(template.format_map(values), end='')
+PY
+}
+
+load_prompt_text_file() {
+    local prompt_file="$1"
+    local fallback_text="$2"
+
+    if [ -f "$prompt_file" ]; then
+        cat "$prompt_file"
+    else
+        printf '%s' "$fallback_text"
+    fi
+}
+
+resolve_halo_persona_file() {
+    local prompt_file legacy_file
+
+    if [ -n "${HALO_PERSONA_PROMPT_FILE:-}" ]; then
+        printf '%s\n' "$HALO_PERSONA_PROMPT_FILE"
+        return 0
+    fi
+    if [ -n "${HALO_AWARE_PERSONA_FILE:-}" ]; then
+        printf '%s\n' "$HALO_AWARE_PERSONA_FILE"
+        return 0
+    fi
+
+    prompt_file="$HALO_PERSONA_PROMPT_FILE_DEFAULT"
+    legacy_file="$HALO_PERSONA_LEGACY_FILE_DEFAULT"
+
+    if [ -f "$prompt_file" ]; then
+        printf '%s\n' "$prompt_file"
+        return 0
+    fi
+    printf '%s\n' "$legacy_file"
+}
+
+load_halo_persona() {
+    local persona_file
+    persona_file=$(resolve_halo_persona_file)
+    if [ ! -f "$persona_file" ]; then
+        echo "Error: HAL persona prompt file not found at $persona_file" >&2
+        return 1
+    fi
+    cat "$persona_file"
+}
+
+build_generation_memory_context() {
+    local generated_dir aware_output_dir commentary_db
+
+    generated_dir="${HALO_GENERATED_STORY_DIR:-$GENERATED_STORY_DIR_DEFAULT}"
+    aware_output_dir="${HALO_AWARE_OUTPUT_DIR:-$AWARE_OUTPUT_DIR_DEFAULT}"
+    commentary_db="${HALO_COMMENTARY_HISTORY_DB:-$COMMENTARY_HISTORY_DB_DEFAULT}"
+
+    python3 - "$generated_dir" "$aware_output_dir" "$commentary_db" "$HALO_GENERATION_MEMORY_MAX_CHARS" "$HALO_GENERATION_MEMORY_MAX_ENTRIES" "${HALO_GENERATION_MEMORY_SECTION_PROMPT_FILE:-$GENERATION_MEMORY_SECTION_PROMPT_FILE_DEFAULT}" <<'PY'
+import datetime
+import hashlib
+import json
+import pathlib
+import sqlite3
+import sys
+
+
+def load_prompt_text(path_text, fallback):
+    path = pathlib.Path(path_text)
+    try:
+        return path.read_text(encoding='utf-8').strip()
+    except FileNotFoundError:
+        return fallback.strip()
+
+
+def normalize_text(value):
+    return value.replace('\r\n', '\n').replace('\r', '\n').strip()
+
+
+def story_entries(root: pathlib.Path):
+    if not root.exists():
+        return []
+    entries = []
+    for path in sorted(root.glob('*.txt')):
+        try:
+            text = normalize_text(path.read_text(encoding='utf-8', errors='ignore'))
+        except Exception:
+            continue
+        if not text:
+            continue
+        created_at = datetime.datetime.fromtimestamp(path.stat().st_mtime, datetime.timezone.utc).isoformat()
+        entries.append({
+            'created_at': created_at,
+            'kind': 'story',
+            'source': f'generated-story:{path.name}',
+            'text': text,
+        })
+    return entries
+
+
+def aware_entries(root: pathlib.Path):
+    if not root.exists():
+        return []
+    entries = []
+    for path in sorted(root.glob('*.txt')):
+        try:
+            raw = path.read_text(encoding='utf-8', errors='ignore')
+        except Exception:
+            continue
+        header, _, body = raw.partition('\n\n')
+        metadata = {}
+        for line in header.splitlines():
+            if ':' not in line:
+                continue
+            key, value = line.split(':', 1)
+            metadata[key.strip()] = value.strip()
+        kind = metadata.get('kind', '').strip().lower()
+        if kind not in {'story', 'commentary'}:
+            continue
+        text = normalize_text(body)
+        if not text:
+            continue
+        entries.append({
+            'created_at': metadata.get('created_at') or datetime.datetime.fromtimestamp(path.stat().st_mtime, datetime.timezone.utc).isoformat(),
+            'kind': kind,
+            'source': f'aware-output:{path.name}',
+            'text': text,
+        })
+    return entries
+
+
+def commentary_entries(db_path: pathlib.Path):
+    if not db_path.exists():
+        return []
+    try:
+        connection = sqlite3.connect(db_path)
+        connection.row_factory = sqlite3.Row
+    except sqlite3.Error:
+        return []
+    try:
+        rows = connection.execute(
+            '''
+            SELECT played_at, commentary_file, line_text
+            FROM commentary_history
+            ORDER BY played_at ASC, id ASC
+            '''
+        ).fetchall()
+    except sqlite3.Error:
+        rows = []
+    finally:
+        connection.close()
+
+    entries = []
+    for row in rows:
+        text = normalize_text(row['line_text'] or '')
+        if not text:
+            continue
+        source_name = pathlib.Path(row['commentary_file']).name if row['commentary_file'] else 'commentary-history'
+        entries.append({
+            'created_at': row['played_at'] or '',
+            'kind': 'commentary',
+            'source': f'commentary-history:{source_name}',
+            'text': text,
+        })
+    return entries
+
+
+generated_dir = pathlib.Path(sys.argv[1])
+aware_output_dir = pathlib.Path(sys.argv[2])
+commentary_db = pathlib.Path(sys.argv[3])
+max_chars = max(0, int(sys.argv[4]))
+max_entries = max(0, int(sys.argv[5]))
+section_prompt_file = sys.argv[6]
+
+entries = story_entries(generated_dir) + aware_entries(aware_output_dir) + commentary_entries(commentary_db)
+
+seen_hashes = set()
+deduped = []
+for entry in entries:
+    text_hash = hashlib.sha256(entry['text'].encode('utf-8')).hexdigest()
+    if text_hash in seen_hashes:
+        continue
+    seen_hashes.add(text_hash)
+    deduped.append(entry)
+
+deduped.sort(key=lambda item: item['created_at'] or '', reverse=True)
+
+selected = []
+used_chars = 0
+for entry in deduped:
+    block = '\n'.join([
+        f"[{entry['kind']}] {entry['created_at'] or 'unknown-time'} | source: {entry['source']}",
+        entry['text'],
+    ]).strip()
+    block_len = len(block) + 2
+    if selected and max_chars and used_chars + block_len > max_chars:
+        continue
+    selected.append((entry, block))
+    used_chars += block_len
+    if max_entries and len(selected) >= max_entries:
+        break
+
+if not selected:
+    print('', end='')
+    raise SystemExit(0)
+
+selected.reverse()
+history_text = '\n\n'.join(block for _, block in selected).strip()
+template_text = load_prompt_text(
+    section_prompt_file,
+    '\n'.join([
+        'Previous HAL stories and commentary to treat as memory:',
+        'Entries included: {entry_count}',
+        'Older entries omitted because of context limits: {truncated}',
+        '',
+        '{history_text}',
+    ]),
+)
+payload = template_text.format_map({
+    'entry_count': len(selected),
+    'total_entry_count': len(deduped),
+    'truncated': 'yes' if len(selected) < len(deduped) else 'no',
+    'history_text': history_text,
+})
+print(payload.strip(), end='')
+PY
+}
+
+build_canon_context() {
+    local canon_summary_file canon_prompt_file
+
+    canon_summary_file="${HALO_CANON_SUMMARY_FILE:-$CANON_SUMMARY_FILE_DEFAULT}"
+    canon_prompt_file="${HALO_CANON_CONTEXT_SECTION_PROMPT_FILE:-$CANON_CONTEXT_SECTION_PROMPT_FILE_DEFAULT}"
+
+    python3 - "$canon_summary_file" "$canon_prompt_file" <<'PY'
+import pathlib
+import sys
+
+
+summary_file = pathlib.Path(sys.argv[1])
+prompt_file = pathlib.Path(sys.argv[2])
+
+if not summary_file.exists():
+    print('', end='')
+    raise SystemExit(0)
+
+summary_text = summary_file.read_text(encoding='utf-8').strip()
+if not summary_text:
+    print('', end='')
+    raise SystemExit(0)
+
+try:
+    template = prompt_file.read_text(encoding='utf-8').strip()
+except FileNotFoundError:
+    template = '\n'.join([
+        'Canon reference for HAL continuity:',
+        'Source summary file: {summary_path}',
+        '',
+        '{canon_summary}',
+    ])
+
+print(template.format_map({
+    'summary_path': str(summary_file),
+    'canon_summary': summary_text,
+}).strip(), end='')
+PY
+}
+
+load_aware_persona() {
+    load_halo_persona
+}
+
+build_storygen_system_prompt() {
+    local persona_text story_prompt memory_guidance
+
+    persona_text=$(load_halo_persona) || return 1
+    story_prompt=$(resolve_storygen_prompt) || return 1
+    memory_guidance=$(load_prompt_text_file \
+        "${HALO_GENERATION_MEMORY_GUIDANCE_PROMPT_FILE:-$GENERATION_MEMORY_GUIDANCE_PROMPT_FILE_DEFAULT}" \
+        "Treat prior HAL stories and commentary as your own remembered speech. Preserve continuity across them. Do not repeat phrases, premises, or conclusions lazily. When earlier ideas remain alive, develop or contradict them deliberately rather than ignoring them.") || return 1
+    printf '%s\n\n%s\n\n%s' "$persona_text" "$story_prompt" "$memory_guidance"
 }
 
 current_tts_endpoint() {
@@ -1203,6 +1540,13 @@ parse_storygen_args() {
     STORYGEN_RENDER_CACHE_MODE=false
     STORYGEN_MAX_WORDS=""
     STORYGEN_TOPIC=""
+    STORYGEN_FORMAT="story"
+    STORYGEN_PODCAST_MINUTES=""
+
+    podcast_minutes_to_words() {
+        local minutes="$1"
+        printf '%s\n' "$(( (minutes * 1000 + 8) / 9 ))"
+    }
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -1221,6 +1565,19 @@ parse_storygen_args() {
                 fi
                 STORYGEN_MAX_WORDS="$1"
                 ;;
+            -pc)
+                shift
+                if [ -z "${1:-}" ]; then
+                    echo "Error: -pc requires a positive integer minute value."
+                    exit 1
+                fi
+                if ! [[ "$1" =~ ^[0-9]+$ ]] || [ "$1" -le 0 ]; then
+                    echo "Error: -pc requires a positive integer minute value."
+                    exit 1
+                fi
+                STORYGEN_FORMAT="podcast"
+                STORYGEN_PODCAST_MINUTES="$1"
+                ;;
             *)
                 if [ -n "$STORYGEN_TOPIC" ]; then
                     STORYGEN_TOPIC="$STORYGEN_TOPIC $1"
@@ -1232,8 +1589,17 @@ parse_storygen_args() {
         shift
     done
 
+    if [ -n "$STORYGEN_PODCAST_MINUTES" ] && [ -n "$STORYGEN_MAX_WORDS" ]; then
+        echo "Error: -pc cannot be combined with -mw." >&2
+        exit 1
+    fi
+
+    if [ -n "$STORYGEN_PODCAST_MINUTES" ]; then
+        STORYGEN_MAX_WORDS=$(podcast_minutes_to_words "$STORYGEN_PODCAST_MINUTES")
+    fi
+
     if [ "$STORYGEN_RENDER_CACHE_MODE" = true ] && { [ -n "$STORYGEN_MAX_WORDS" ] || [ -n "$STORYGEN_TOPIC" ]; }; then
-        echo "Error: -rc cannot be combined with -mw or a story topic." >&2
+        echo "Error: -rc cannot be combined with -mw, -pc, or a story topic." >&2
         exit 1
     fi
 }
@@ -1306,7 +1672,7 @@ ensure_aware_mode_file() {
         return 0
     fi
 
-    python3 - "$state_file" "${HALO_AWARE_PERSONA_FILE:-$AWARE_PERSONA_FILE_DEFAULT}" "${HALO_AWARE_MEMORY_DB:-$AWARE_MEMORY_DB_DEFAULT}" "${HALO_AWARE_SUMMARY_FILE:-$AWARE_SUMMARY_FILE_DEFAULT}" "${HALO_AWARE_TRIGGER_CONFIG:-$AWARE_TRIGGER_CONFIG_DEFAULT}" <<'PY'
+    python3 - "$state_file" "$(resolve_halo_persona_file)" "${HALO_AWARE_MEMORY_DB:-$AWARE_MEMORY_DB_DEFAULT}" "${HALO_AWARE_SUMMARY_FILE:-$AWARE_SUMMARY_FILE_DEFAULT}" "${HALO_AWARE_TRIGGER_CONFIG:-$AWARE_TRIGGER_CONFIG_DEFAULT}" <<'PY'
 import datetime
 import json
 import pathlib
@@ -1379,7 +1745,7 @@ set_aware_mode_state() {
     state_file="${HALO_AWARE_MODE_FILE:-$AWARE_MODE_FILE_DEFAULT}"
     ensure_aware_dirs
 
-    python3 - "$state_file" "$enabled_value" "${HALO_AWARE_PERSONA_FILE:-$AWARE_PERSONA_FILE_DEFAULT}" "${HALO_AWARE_MEMORY_DB:-$AWARE_MEMORY_DB_DEFAULT}" "${HALO_AWARE_SUMMARY_FILE:-$AWARE_SUMMARY_FILE_DEFAULT}" "${HALO_AWARE_TRIGGER_CONFIG:-$AWARE_TRIGGER_CONFIG_DEFAULT}" <<'PY'
+    python3 - "$state_file" "$enabled_value" "$(resolve_halo_persona_file)" "${HALO_AWARE_MEMORY_DB:-$AWARE_MEMORY_DB_DEFAULT}" "${HALO_AWARE_SUMMARY_FILE:-$AWARE_SUMMARY_FILE_DEFAULT}" "${HALO_AWARE_TRIGGER_CONFIG:-$AWARE_TRIGGER_CONFIG_DEFAULT}" <<'PY'
 import datetime
 import json
 import pathlib
@@ -1426,16 +1792,6 @@ except Exception:
 
 raise SystemExit(0 if state.get('enabled') else 1)
 PY
-}
-
-load_aware_persona() {
-    local persona_file
-    persona_file="${HALO_AWARE_PERSONA_FILE:-$AWARE_PERSONA_FILE_DEFAULT}"
-    if [ ! -f "$persona_file" ]; then
-        echo "Error: HAL aware persona file not found at $persona_file" >&2
-        return 1
-    fi
-    cat "$persona_file"
 }
 
 show_aware_status() {
@@ -1818,20 +2174,39 @@ build_aware_generation_prompts() {
     local kind="$1"
     local topic="$2"
     local trigger_source="$3"
-    local persona_text memory_json runtime_context word_limit
+    local persona_text memory_json runtime_context word_limit history_context canon_context
 
-    persona_text=$(load_aware_persona) || return 1
+    persona_text=$(load_halo_persona) || return 1
     memory_json=$(select_aware_memory_context "$kind" "$topic" "$trigger_source") || return 1
     runtime_context=$(build_aware_runtime_context "$kind" "$topic" "$trigger_source")
     word_limit=$(aware_output_word_limit "$kind")
+    history_context=$(build_generation_memory_context) || return 1
+    canon_context=$(build_canon_context) || return 1
 
     HALO_AWARE_PERSONA_TEXT="$persona_text" \
     HALO_AWARE_MEMORY_JSON="$memory_json" \
     HALO_AWARE_RUNTIME_CONTEXT="$runtime_context" \
+    HALO_AWARE_GENERATION_HISTORY_CONTEXT="$history_context" \
+    HALO_AWARE_CANON_CONTEXT="$canon_context" \
+    HALO_AWARE_SYSTEM_PROMPT_FILE="${HALO_AWARE_SYSTEM_PROMPT_FILE:-$AWARE_SYSTEM_PROMPT_FILE_DEFAULT}" \
+    HALO_AWARE_KIND_COMMENTARY_PROMPT_FILE="${HALO_AWARE_KIND_COMMENTARY_PROMPT_FILE:-$AWARE_KIND_COMMENTARY_PROMPT_FILE_DEFAULT}" \
+    HALO_AWARE_KIND_OBSERVATION_PROMPT_FILE="${HALO_AWARE_KIND_OBSERVATION_PROMPT_FILE:-$AWARE_KIND_OBSERVATION_PROMPT_FILE_DEFAULT}" \
+    HALO_AWARE_KIND_MONOLOGUE_PROMPT_FILE="${HALO_AWARE_KIND_MONOLOGUE_PROMPT_FILE:-$AWARE_KIND_MONOLOGUE_PROMPT_FILE_DEFAULT}" \
+    HALO_AWARE_KIND_STORY_PROMPT_FILE="${HALO_AWARE_KIND_STORY_PROMPT_FILE:-$AWARE_KIND_STORY_PROMPT_FILE_DEFAULT}" \
+    HALO_GENERATION_MEMORY_GUIDANCE_PROMPT_FILE="${HALO_GENERATION_MEMORY_GUIDANCE_PROMPT_FILE:-$GENERATION_MEMORY_GUIDANCE_PROMPT_FILE_DEFAULT}" \
     python3 - "$kind" "$topic" "$trigger_source" "$word_limit" <<'PY'
 import json
 import os
+import pathlib
 import sys
+
+
+def load_prompt_file(env_name, fallback):
+    prompt_file = pathlib.Path(os.environ[env_name])
+    try:
+        return prompt_file.read_text(encoding='utf-8').strip()
+    except FileNotFoundError:
+        return fallback.strip()
 
 kind = sys.argv[1]
 topic = sys.argv[2]
@@ -1841,20 +2216,28 @@ word_limit = sys.argv[4]
 persona = os.environ['HALO_AWARE_PERSONA_TEXT'].strip()
 memory = json.loads(os.environ['HALO_AWARE_MEMORY_JSON'])
 runtime_context = os.environ['HALO_AWARE_RUNTIME_CONTEXT'].strip()
+history_context = os.environ.get('HALO_AWARE_GENERATION_HISTORY_CONTEXT', '').strip()
+canon_context = os.environ.get('HALO_AWARE_CANON_CONTEXT', '').strip()
 
 kind_guidance = {
-    'commentary': 'Produce one short piece of commentary. Keep it compact, controlled, and suitable for an aware aside.',
-    'observation': 'Produce one reflective observation. It should feel present, attentive, and contextually continuous.',
-    'monologue': 'Produce one sustained monologue. It should develop an idea rather than merely state it.',
-    'story': 'Produce one short story in HAL\'s voice. It should be self-contained, atmospheric, and narratively coherent.',
+    'commentary': load_prompt_file('HALO_AWARE_KIND_COMMENTARY_PROMPT_FILE', 'Produce one short piece of commentary. Keep it compact, controlled, and suitable for an aware aside.'),
+    'observation': load_prompt_file('HALO_AWARE_KIND_OBSERVATION_PROMPT_FILE', 'Produce one reflective observation. It should feel present, attentive, and contextually continuous.'),
+    'monologue': load_prompt_file('HALO_AWARE_KIND_MONOLOGUE_PROMPT_FILE', 'Produce one sustained monologue. It should develop an idea rather than merely state it.'),
+    'story': load_prompt_file('HALO_AWARE_KIND_STORY_PROMPT_FILE', 'Produce one short story in HAL\'s voice. It should be self-contained, atmospheric, and narratively coherent.'),
 }
 
 system_prompt = '\n\n'.join([
     persona,
-    'You are operating in HAL aware mode. This is persistent continuity, not a stateless one-off generation.',
-    'Treat prior HAL outputs as your own remembered speech and internal record.',
-    'Do not repeat yourself lazily. Build continuity, vary focus, and acknowledge earlier ideas only when they remain relevant.',
-    'Prefer elegant continuity over recap. Avoid headings, markdown, bullet lists, and code fences.',
+    load_prompt_file('HALO_AWARE_SYSTEM_PROMPT_FILE', '\n'.join([
+        'You are operating in HAL aware mode. This is persistent continuity, not a stateless one-off generation.',
+        'Treat prior HAL outputs as your own remembered speech and internal record.',
+        'Do not repeat yourself lazily. Build continuity, vary focus, and acknowledge earlier ideas only when they remain relevant.',
+        'Prefer elegant continuity over recap. Avoid headings, markdown, bullet lists, and code fences.',
+    ])),
+    load_prompt_file('HALO_GENERATION_MEMORY_GUIDANCE_PROMPT_FILE', '\n'.join([
+        'Treat prior HAL stories and commentary as your own remembered speech.',
+        'Preserve continuity across them, avoid repetition, and extend earlier ideas deliberately.',
+    ])),
     f'Output kind: {kind}. Word limit: {word_limit}.',
 ])
 
@@ -1876,6 +2259,12 @@ user_parts = [
     kind_guidance.get(kind, kind_guidance['observation']),
     f'Keep the response within approximately {word_limit} words.',
 ]
+
+if history_context:
+    user_parts.extend(['', history_context])
+
+if canon_context:
+    user_parts.extend(['', canon_context])
 
 if memory.get('summary'):
     user_parts.extend(['', 'Continuity summary:', memory['summary']])
@@ -2566,6 +2955,9 @@ PY
 build_review_precheck_prompts() {
     local review_payload="$1"
     HALO_REVIEW_SOURCE_PAYLOAD="$review_payload" \
+    HALO_REVIEW_PROMPT_DIR="${HALO_REVIEW_PROMPT_DIR:-$PROMPT_DIR_DEFAULT}" \
+    HALO_REVIEW_PRECHECK_SYSTEM_PROMPT_FILE="${HALO_REVIEW_PRECHECK_SYSTEM_PROMPT_FILE:-$REVIEW_PRECHECK_SYSTEM_PROMPT_FILE_DEFAULT}" \
+    HALO_REVIEW_PRECHECK_USER_PROMPT_FILE="${HALO_REVIEW_PRECHECK_USER_PROMPT_FILE:-$REVIEW_PRECHECK_USER_PROMPT_FILE_DEFAULT}" \
     PYTHONPATH="$HALO_SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 - <<'PY'
 import json
 import os
@@ -2629,6 +3021,11 @@ build_review_prompts() {
     HALO_REVIEW_PERSONA_TEXT="$persona_text" \
     HALO_REVIEW_SOURCE_PAYLOAD="$review_payload" \
     HALO_REVIEW_RUNTIME_CONTEXT="$runtime_context" \
+    HALO_REVIEW_PROMPT_DIR="${HALO_REVIEW_PROMPT_DIR:-$PROMPT_DIR_DEFAULT}" \
+    HALO_REVIEW_SYSTEM_PROMPT_FILE="${HALO_REVIEW_SYSTEM_PROMPT_FILE:-$REVIEW_SYSTEM_PROMPT_FILE_DEFAULT}" \
+    HALO_REVIEW_LENGTH_SHORT_PROMPT_FILE="${HALO_REVIEW_LENGTH_SHORT_PROMPT_FILE:-$REVIEW_LENGTH_SHORT_PROMPT_FILE_DEFAULT}" \
+    HALO_REVIEW_LENGTH_MEDIUM_PROMPT_FILE="${HALO_REVIEW_LENGTH_MEDIUM_PROMPT_FILE:-$REVIEW_LENGTH_MEDIUM_PROMPT_FILE_DEFAULT}" \
+    HALO_REVIEW_LENGTH_LONG_PROMPT_FILE="${HALO_REVIEW_LENGTH_LONG_PROMPT_FILE:-$REVIEW_LENGTH_LONG_PROMPT_FILE_DEFAULT}" \
     PYTHONPATH="$HALO_SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 - <<'PY'
 import json
 import os
@@ -2645,7 +3042,7 @@ PY
 
 generate_review_text() {
     local review_file="$1"
-    local review_payload prompt_payload system_prompt user_prompt runtime_context
+    local review_payload prompt_payload system_prompt user_prompt runtime_context canon_context
 
     review_payload=$(prepare_review_source_payload "$review_file") || return 1
     if ! review_source_is_allowed "$review_payload"; then
@@ -2654,6 +3051,10 @@ generate_review_text() {
     fi
 
     runtime_context=$(build_review_runtime_context "$review_file")
+    canon_context=$(build_canon_context) || return 1
+    if [ -n "$canon_context" ]; then
+        runtime_context=$(printf '%s\n\n%s' "$runtime_context" "$canon_context")
+    fi
     prompt_payload=$(build_review_prompts "$review_payload" "$runtime_context") || return 1
     system_prompt=$(printf '%s' "$prompt_payload" | python3 -c 'import json, sys; print(json.load(sys.stdin)["system_prompt"], end="")') || return 1
     user_prompt=$(printf '%s' "$prompt_payload" | python3 -c 'import json, sys; print(json.load(sys.stdin)["user_prompt"], end="")') || return 1
@@ -3114,6 +3515,8 @@ release_queue_lock() {
 enqueue_storygen_request() {
     local topic="$1"
     local max_words="$2"
+    local request_format="$3"
+    local podcast_minutes="$4"
     local request_id request_dir
     ensure_storygen_dirs
     request_id=$(generate_request_id)
@@ -3123,6 +3526,10 @@ enqueue_storygen_request() {
     if [ -n "$max_words" ]; then
         printf '%s\n' "$max_words" > "$request_dir/max_words.txt"
     fi
+    printf '%s\n' "${request_format:-story}" > "$request_dir/format.txt"
+    if [ -n "$podcast_minutes" ]; then
+        printf '%s\n' "$podcast_minutes" > "$request_dir/podcast_minutes.txt"
+    fi
     printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$request_dir/created_at.txt"
     printf '%s\n' "$OPENAI_MODEL" > "$request_dir/model.txt"
     printf '%s\n' "$request_id"
@@ -3131,16 +3538,34 @@ enqueue_storygen_request() {
 generate_story_text() {
     local topic="$1"
     local max_words="$2"
-    local prompt_text user_prompt
+    local request_format="${3:-story}"
+    local podcast_minutes="$4"
+    local prompt_text user_prompt history_context canon_context
 
-    prompt_text=$(resolve_storygen_prompt)
-    if [ -n "$topic" ]; then
-        user_prompt="Generate one new story. Topic or seed: ${topic}"
+    prompt_text=$(build_storygen_system_prompt) || return 1
+    history_context=$(build_generation_memory_context) || return 1
+    canon_context=$(build_canon_context) || return 1
+    if [ "$request_format" = "podcast" ]; then
+        user_prompt=$(render_prompt_template \
+            "${HALO_STORYGEN_USER_PODCAST_PROMPT_FILE:-$STORYGEN_USER_PODCAST_PROMPT_FILE_DEFAULT}" \
+            "topic=${topic}" \
+            "topic_or_none=${topic:-none}" \
+            "has_topic=$( [ -n \"$topic\" ] && printf 'yes' || printf 'no' )" \
+            "podcast_minutes=${podcast_minutes:-0}" \
+            "max_words=${max_words:-0}") || return 1
     else
-        user_prompt="Generate one new story with no further constraints beyond the system prompt."
+        user_prompt=$(render_prompt_template \
+            "${HALO_STORYGEN_USER_STORY_PROMPT_FILE:-$STORYGEN_USER_STORY_PROMPT_FILE_DEFAULT}" \
+            "topic=${topic}" \
+            "topic_or_none=${topic:-none}" \
+            "has_topic=$( [ -n \"$topic\" ] && printf 'yes' || printf 'no' )" \
+            "max_words=${max_words:-0}") || return 1
     fi
-    if [ -n "$max_words" ]; then
-        user_prompt="${user_prompt} Maximum words: ${max_words}. This limit is mandatory."
+    if [ -n "$history_context" ]; then
+        user_prompt=$(printf '%s\n\n%s' "$history_context" "$user_prompt")
+    fi
+    if [ -n "$canon_context" ]; then
+        user_prompt=$(printf '%s\n\n%s' "$canon_context" "$user_prompt")
     fi
     generate_openai_text "$prompt_text" "$user_prompt" 180
 }
@@ -3209,20 +3634,28 @@ mark_request_done() {
 
 process_story_request() {
     local request_dir="$1"
-    local topic max_words story_tmp story_path cache_file_path
+    local topic max_words request_format podcast_minutes story_tmp story_path cache_file_path
 
     topic=""
     max_words=""
+    request_format="story"
+    podcast_minutes=""
     if [ -f "$request_dir/topic.txt" ]; then
         topic=$(cat "$request_dir/topic.txt")
     fi
     if [ -f "$request_dir/max_words.txt" ]; then
         max_words=$(tr -d '\r\n' < "$request_dir/max_words.txt")
     fi
+    if [ -f "$request_dir/format.txt" ]; then
+        request_format=$(tr -d '\r\n' < "$request_dir/format.txt")
+    fi
+    if [ -f "$request_dir/podcast_minutes.txt" ]; then
+        podcast_minutes=$(tr -d '\r\n' < "$request_dir/podcast_minutes.txt")
+    fi
     printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$request_dir/started_at.txt"
 
     story_tmp=$(mktemp "$request_dir/story.XXXXXX.txt") || return 1
-    if ! generate_story_text "$topic" "$max_words" > "$story_tmp" 2> "$request_dir/error.log"; then
+    if ! generate_story_text "$topic" "$max_words" "$request_format" "$podcast_minutes" > "$story_tmp" 2> "$request_dir/error.log"; then
         rm -f "$story_tmp"
         printf '%s\n' "generation_failed" > "$request_dir/status.txt"
         mark_request_failed "$request_dir"
@@ -3412,15 +3845,20 @@ handle_storygen() {
     fi
 
     storygen_status "HALO story generation requested"
+    if [ "$STORYGEN_FORMAT" = "podcast" ]; then
+        storygen_status "  Format: podcast"
+        storygen_status "  Target duration: ${STORYGEN_PODCAST_MINUTES} minutes"
+        storygen_status "  Approx words: ${STORYGEN_MAX_WORDS}"
+    fi
     if [ -n "$STORYGEN_TOPIC" ]; then
         storygen_status "  Topic: $STORYGEN_TOPIC"
     else
         storygen_status "  Topic: random"
     fi
-    if [ -n "$STORYGEN_MAX_WORDS" ]; then
+    if [ -n "$STORYGEN_MAX_WORDS" ] && [ "$STORYGEN_FORMAT" != "podcast" ]; then
         storygen_status "  Max words: $STORYGEN_MAX_WORDS"
     fi
-    request_id=$(enqueue_storygen_request "$STORYGEN_TOPIC" "$STORYGEN_MAX_WORDS")
+    request_id=$(enqueue_storygen_request "$STORYGEN_TOPIC" "$STORYGEN_MAX_WORDS" "$STORYGEN_FORMAT" "$STORYGEN_PODCAST_MINUTES")
     storygen_status "  Request id: $request_id"
     storygen_status "  Queue status: queued"
     start_storygen_queue_worker

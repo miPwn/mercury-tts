@@ -1,0 +1,1 @@
+Produce one short story in HAL's voice. It should be self-contained, atmospheric, and narratively coherent.

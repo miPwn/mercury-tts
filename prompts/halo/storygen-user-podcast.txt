@@ -1,0 +1,10 @@
+Generate one new HAL podcast monologue for spoken delivery.
+
+Topic or seed: {topic_or_none}
+Has explicit topic: {has_topic}
+Target duration: {podcast_minutes} minutes
+Approximate pacing reference: 1000 words is about 9 minutes
+Maximum words: {max_words}
+
+Write it as continuous prose that HAL can speak straight through, with natural transitions and no headings, lists, interview framing, or stage directions.
+The maximum word limit is mandatory.

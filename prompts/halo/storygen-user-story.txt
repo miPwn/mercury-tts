@@ -1,0 +1,7 @@
+Generate one new story.
+
+Topic or seed: {topic_or_none}
+Has explicit topic: {has_topic}
+Maximum words: {max_words}
+
+The maximum word limit is mandatory.

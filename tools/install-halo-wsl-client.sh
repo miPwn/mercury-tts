@@ -20,6 +20,14 @@ if ! printf '%s' ":$PATH:" | grep -Fq ":$HOME/bin:"; then
 fi
 
 printf 'Installed halo WSL client to %s\n' "$target_client"
-printf 'Windows wrapper: %s\n' "${HALO_WINDOWS_WRAPPER:-/mnt/c/Users/rtmpa/py_scripts/halo.ps1}"
+printf 'Windows wrapper: %s\n' "${HALO_WINDOWS_WRAPPER:-$(wslpath -w "$script_dir/halo.ps1")}"
 printf 'Windows shell: %s\n' "${HALO_WINDOWS_SHELL:-pwsh.exe}"
 printf 'Run with: halo /?\n'
+printf '\nCurrent halo commands include:\n'
+printf '  halo speak\n'
+printf '  halo read <story>\n'
+printf '  halo review <file>\n'
+printf '  halo storygen -pc <minutes> <topic>\n'
+printf '  halo aware on|off|status\n'
+printf '  halo aware trigger [commentary|observation|monologue|story] [topic]\n'
+printf '  halo sensory status|scan|commentary\n'

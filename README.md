@@ -20,7 +20,7 @@ The current production-oriented path is the `halo` runtime in this repo. It is r
 - driving aware-mode and sensory workflows
 - optionally triggering dot-matrix visualization from completed audio
 
-The companion `hal` pipeline is separate and should be treated as independent infrastructure. The details are in [VOICE_ARCHITECTURE.md](VOICE_ARCHITECTURE.md).
+The companion `hal` pipeline is separate and should be treated as independent infrastructure. The details are in [docs/architecture/voice-architecture.md](docs/architecture/voice-architecture.md).
 
 ## Command Surface
 
@@ -39,10 +39,13 @@ halo --render-only review <filename.txt|/full/path/to/file.txt>
 halo list-stories
 halo vq
 halo storygen [-mw max_words] [optional topic]
+halo storygen -pc minutes [topic]
 halo storygen -rc
 halo story-gen [-mw max_words] [optional topic]
+halo story-gen -pc minutes [topic]
 halo sg [-mw max_words] [optional topic]
-halo --render-only storygen [-mw max_words] [optional topic]
+halo sg -pc minutes [topic]
+halo --render-only storygen [-mw max_words|-pc minutes] [optional topic]
 halo aware on|off|status
 halo aware trigger [commentary|observation|monologue|story] [optional topic]
 halo aware tick
@@ -63,6 +66,7 @@ The most common operator flows are:
 - list story files and cache status: `halo list-stories`
 - watch the live story queue: `halo vq`
 - generate a new story request and return the request id immediately: `halo storygen`
+- generate a long-form podcast script for a target duration: `halo story-gen -pc 30 "this is the topic I want HAL to speak about"`
 - pre-render all uncached stories: `halo storygen -rc`
 
 ## Runtime Architecture
@@ -256,9 +260,26 @@ Behavior:
 - generated story text is written into the story directory
 - generated stories are immediately rendered into cache
 - `-mw` enforces a max-word limit on the saved text
+- `-pc` switches generation to podcast mode and converts minutes to an approximate word limit using `1000 words ~= 9 minutes`
 - `storygen -rc` walks the existing story directory and renders only the uncached stories
 
 The default story prompt is defined in the runtime, but you can override it with either an environment variable or a prompt file under the state/story tree.
+
+## Prompt Files
+
+The editable prompt files used by `halo` now live under:
+
+- `prompts/halo/`
+
+This directory contains the default instruction text for:
+
+- story generation
+- podcast generation
+- aware-mode system and kind-specific guidance
+- review precheck classification
+- review generation and review length guidance
+
+`halo` still assembles runtime context such as timestamps, topics, continuity summaries, and source text in code, but the static model instructions are now file-backed so you can inspect and edit them directly.
 
 ## Latency And Monitoring
 
@@ -357,7 +378,7 @@ bash /mnt/f/DEVELOPMENT/FALCON_LOCAL/mercury-tts/tools/install-halo-wsl-client.s
 
 That installer places the client at `~/bin/halo` and adds `~/bin` to the WSL shell `PATH` if needed.
 
-The WSL client intentionally does not maintain its own SSH configuration. It delegates to the existing Windows wrapper through `pwsh.exe`, which allows WSL to reuse the already working Windows-side Falcon connection and key setup.
+The WSL client intentionally does not maintain its own SSH configuration. It delegates to the repo-managed Windows wrapper at `tools/halo.ps1` through `pwsh.exe`, which allows WSL to reuse the already working Windows-side Falcon connection and key setup.
 
 Useful overrides:
 
@@ -489,7 +510,7 @@ Operator-relevant files and directories:
 - `sensory/`: Python sensory subsystem
 - `tools/`: WSL client install and XTTS port-forward watchdog tooling
 - `k8s/`: deployment manifests, including XTTS service definitions
-- `VOICE_ARCHITECTURE.md`: guardrails for the two-pipeline design
+- `docs/architecture/voice-architecture.md`: guardrails for the two-pipeline design
 
 ## Legacy Go Daemons
 
@@ -543,7 +564,7 @@ At a glance:
 
 ## Additional Documents
 
-- [VOICE_ARCHITECTURE.md](VOICE_ARCHITECTURE.md)
+- [docs/architecture/voice-architecture.md](docs/architecture/voice-architecture.md)
 - For the LED matrix integration details, see the `HALO_DOTMATRIX.md` document in the `hal-display` workspace.
 
 ## License
@@ -606,7 +627,7 @@ bash /mnt/f/DEVELOPMENT/FALCON_LOCAL/mercury-tts/tools/install-halo-wsl-client.s
 
 That installer places the client at `~/bin/halo` and adds `~/bin` to the WSL shell `PATH` if needed.
 
-The WSL client does not maintain its own SSH configuration. Instead, it delegates to the existing Windows wrapper at `C:\Users\rtmpa\py_scripts\halo.ps1` through `pwsh.exe`, so it reuses the already working Windows-side Falcon connection and key setup.
+The WSL client does not maintain its own SSH configuration. Instead, it delegates to the repo-managed Windows wrapper at `tools/halo.ps1` through `pwsh.exe`, so it reuses the already working Windows-side Falcon connection and key setup.
 
 After installation, these work from WSL:
 

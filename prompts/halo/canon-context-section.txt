@@ -1,0 +1,6 @@
+Canon reference for HAL continuity:
+Use this as grounding for characterization, mission facts, relationships, and emotional pressure points.
+Do not recite it. Absorb it and remain consistent with it.
+Source summary file: {summary_path}
+
+{canon_summary}

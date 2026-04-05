@@ -1,0 +1,7 @@
+Title: {title}
+
+Approximate length: {word_count} words.
+
+Classify this source for HAL review suitability.
+
+{text}

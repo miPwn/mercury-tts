@@ -1,0 +1,5 @@
+Previous HAL stories and commentary to treat as memory:
+Entries included: {entry_count} of {total_entry_count}
+Older entries omitted because of context limits: {truncated}
+
+{history_text}
