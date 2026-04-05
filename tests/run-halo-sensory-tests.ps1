@@ -1,8 +1,13 @@
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$haloScript = Join-Path $repoRoot 'halo.remote'
+$haloScript = Join-Path $repoRoot 'halo'
+$fallbackHaloScript = Join-Path $repoRoot 'halo.remote'
 $testScript = Join-Path $PSScriptRoot 'test-halo-sensory.sh'
+
+if (-not (Test-Path $haloScript) -and (Test-Path $fallbackHaloScript)) {
+    $haloScript = $fallbackHaloScript
+}
 
 function Convert-ToWslPath {
     param(

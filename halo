@@ -1,6 +1,12 @@
 #!/bin/bash
 
 HALO_SELF="${BASH_SOURCE[0]:-$0}"
+if [[ "$HALO_SELF" != */* ]]; then
+    HALO_SELF=$(command -v -- "$HALO_SELF" 2>/dev/null || printf '%s' "$HALO_SELF")
+fi
+if command -v realpath >/dev/null 2>&1; then
+    HALO_SELF=$(realpath "$HALO_SELF" 2>/dev/null || printf '%s' "$HALO_SELF")
+fi
 HALO_SCRIPT_DIR=$(cd -- "$(dirname -- "$HALO_SELF")" && pwd)
 
 HALO_TTS_PRIMARY_HOST="${HALO_TTS_PRIMARY_HOST:-192.168.1.165}"
@@ -15,7 +21,9 @@ LANGUAGE="en"
 HALO_ROOT="${HALO_ROOT:-/mnt/dkstorage/hal-system-monitor}"
 CACHE_DIR="${HALO_ROOT}/cache/halo-xtts"
 STORY_DIR="${HALO_ROOT}/story"
+REVIEW_DIR="${HALO_ROOT}/review"
 STATE_DIR="${HALO_ROOT}/state/halo"
+GENERATED_STORY_DIR_DEFAULT="${STATE_DIR}/generated-stories"
 COMMENTARY_HISTORY_DB_DEFAULT="${STATE_DIR}/commentary-history.sqlite3"
 HALO_COMMENTARY_SIMILARITY_THRESHOLD="${HALO_COMMENTARY_SIMILARITY_THRESHOLD:-0.74}"
 HALO_COMMENTARY_RECENT_SIMILARITY_WINDOW="${HALO_COMMENTARY_RECENT_SIMILARITY_WINDOW:-24}"
@@ -71,6 +79,7 @@ READ_MODE=false
 READ_FILE=""
 ALIAS_NAME_OVERRIDE=""
 LIST_STORIES_MODE=false
+QUEUE_VIEW_MODE=false
 STORYGEN_MODE=false
 STORYGEN_RENDER_CACHE_MODE=false
 REVIEW_MODE=false
@@ -117,14 +126,16 @@ usage() {
     echo "       halo speak"
     echo "       halo read <story-name|filename.txt|/full/path/to/file.txt>"
     echo "       halo --render-only read <story-name|filename.txt|/full/path/to/file.txt>"
-    echo "       halo review <filename.txt|/full/path/to/file.txt>"
-    echo "       halo --render-only review <filename.txt|/full/path/to/file.txt>"
+    echo "       halo review <name|filename.txt|/full/path/to/file.txt>"
+    echo "       halo --render-only review <name|filename.txt|/full/path/to/file.txt>"
     echo "       halo list-stories"
+    echo "       halo vq"
     echo "       halo storygen [-mw max_words] [optional topic]"
     echo "       halo storygen -rc"
     echo "       halo story-gen [-mw max_words] [optional topic]"
     echo "       halo sg [-mw max_words] [optional topic]"
     echo "       halo --render-only storygen [-mw max_words] [optional topic]"
+    echo "       storygen requests now enqueue and return a request id immediately"
     echo "       halo aware on|off|status"
     echo "       halo aware trigger [commentary|observation|monologue|story] [optional topic]"
     echo "       halo aware tick"
@@ -266,6 +277,171 @@ tts_request_label() {
 
 storygen_status() {
     printf '%s\n' "$*" >&2
+}
+
+show_storygen_queue_viewer() {
+    ensure_storygen_dirs
+    python3 - "$QUEUE_PENDING_DIR" "$QUEUE_PROCESSING_DIR" "$QUEUE_DONE_DIR" "$QUEUE_FAILED_DIR" "$QUEUE_LOCK_DIR" <<'PY'
+import datetime as dt
+import os
+import pathlib
+import shutil
+import signal
+import sys
+import time
+
+pending_dir = pathlib.Path(sys.argv[1])
+processing_dir = pathlib.Path(sys.argv[2])
+done_dir = pathlib.Path(sys.argv[3])
+failed_dir = pathlib.Path(sys.argv[4])
+lock_dir = pathlib.Path(sys.argv[5])
+
+running = True
+
+
+def stop(_signum, _frame):
+    global running
+    running = False
+
+
+for sig in (signal.SIGINT, signal.SIGTERM):
+    signal.signal(sig, stop)
+
+
+def safe_read(path: pathlib.Path) -> str:
+    try:
+        return path.read_text(encoding='utf-8').strip()
+    except Exception:
+        return ''
+
+
+def request_rows(root: pathlib.Path):
+    rows = []
+    if not root.exists():
+        return rows
+    for entry in sorted((p for p in root.iterdir() if p.is_dir()), key=lambda p: p.name):
+        rows.append(
+            {
+                'id': entry.name,
+                'topic': safe_read(entry / 'topic.txt') or 'random',
+                'created_at': safe_read(entry / 'created_at.txt'),
+                'started_at': safe_read(entry / 'started_at.txt'),
+                'finished_at': safe_read(entry / 'finished_at.txt'),
+                'status': safe_read(entry / 'status.txt'),
+                'error': safe_read(entry / 'error.log').splitlines()[:1],
+                'path': entry,
+            }
+        )
+    return rows
+
+
+def rel_time(raw: str) -> str:
+    if not raw:
+        return '-'
+    try:
+        when = dt.datetime.fromisoformat(raw.replace('Z', '+00:00'))
+        delta = dt.datetime.now(dt.timezone.utc) - when
+        seconds = max(0, int(delta.total_seconds()))
+        if seconds < 60:
+            return f'{seconds}s ago'
+        if seconds < 3600:
+            return f'{seconds // 60}m ago'
+        if seconds < 86400:
+            return f'{seconds // 3600}h ago'
+        return f'{seconds // 86400}d ago'
+    except Exception:
+        return raw
+
+
+def status_color(label: str) -> str:
+    mapping = {
+        'queued': '\033[33m',
+        'generating': '\033[36m',
+        'done': '\033[32m',
+        'failed': '\033[31m',
+        'generation_failed': '\033[31m',
+        'render_failed': '\033[31m',
+        'store_failed': '\033[31m',
+        'empty_story': '\033[31m',
+    }
+    return mapping.get(label, '\033[90m')
+
+
+def truncate(value: str, width: int) -> str:
+    if width <= 0:
+        return ''
+    if len(value) <= width:
+        return value
+    if width <= 3:
+        return value[:width]
+    return value[: width - 3] + '...'
+
+
+def row_line(label: str, item: dict, width: int) -> str:
+    topic = truncate(item['topic'], max(12, width - 42))
+    age = rel_time(item['started_at'] or item['created_at'])
+    status = item['status'] or label
+    color = status_color(status)
+    return f"  {color}{status.upper():<12}\033[0m {item['id']:<31} {age:<10} {topic}"
+
+
+def render_section(title: str, label: str, items: list[dict], width: int, limit: int) -> list[str]:
+    lines = [f'  {title} ({len(items)})']
+    if not items:
+        lines.append('    none')
+        return lines
+    for item in items[:limit]:
+        lines.append(row_line(label, item, width))
+        if item['error']:
+            lines.append('      ' + truncate(item['error'][0], max(20, width - 8)))
+    return lines
+
+
+def snapshot():
+    pending = request_rows(pending_dir)
+    processing = request_rows(processing_dir)
+    done = list(reversed(request_rows(done_dir)))
+    failed = list(reversed(request_rows(failed_dir)))
+    lock_owner = safe_read(lock_dir / 'pid') if lock_dir.exists() else ''
+    return pending, processing, done, failed, lock_owner
+
+
+sys.stdout.write('\033[?1049h\033[?25l')
+sys.stdout.flush()
+
+try:
+    while running:
+        width = max(80, shutil.get_terminal_size((120, 40)).columns)
+        height = max(24, shutil.get_terminal_size((120, 40)).lines)
+        pending, processing, done, failed, lock_owner = snapshot()
+        now = dt.datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')
+        limit = max(2, (height - 16) // 4)
+
+        lines = [
+            '\033[2J\033[H',
+            ' HALO STORYGEN QUEUE VIEWER',
+            f' {now}',
+            '',
+            f'  Pending: {len(pending):<4} Processing: {len(processing):<4} Done: {len(done):<4} Failed: {len(failed):<4} Lock: {lock_owner or "idle"}',
+            '',
+        ]
+        lines.extend(render_section('Processing', 'generating', processing, width, limit))
+        lines.append('')
+        lines.extend(render_section('Pending', 'queued', pending, width, limit))
+        lines.append('')
+        lines.extend(render_section('Recent Done', 'done', done, width, limit))
+        lines.append('')
+        lines.extend(render_section('Recent Failed', 'failed', failed, width, limit))
+        lines.append('')
+        lines.append('  Ctrl-C to exit viewer')
+
+        sys.stdout.write('\n'.join(lines))
+        sys.stdout.flush()
+        time.sleep(1)
+finally:
+    sys.stdout.write('\033[0m\033[?25h\033[?1049l')
+    sys.stdout.flush()
+PY
 }
 
 now_ms() {
@@ -594,7 +770,7 @@ render_uncached_story_cache() {
             failed_count=$(( failed_count + 1 ))
             storygen_status "  Render failed: $(basename "$story_file")"
         fi
-    done < <(find "$STORY_DIR" -maxdepth 1 -type f -name '*.txt' ! -name "$prompt_name" -print0 | sort -z)
+    done < <(find "$STORY_DIR" -maxdepth 1 -type f -name '*.txt' ! -name "$prompt_name" ! -name 'rc.txt' ! -name 'rc_*.txt' -print0 | sort -z)
 
     storygen_status "  Sweep summary: total=${total_count} cached=${cached_count} rendered=${rendered_count} failed=${failed_count}"
     [ "$failed_count" -eq 0 ]
@@ -609,7 +785,14 @@ configure_cache_paths() {
     CACHE_INDEX_FILE="${CACHE_INDEX_DIR}/${CACHE_KEY}.json"
     CACHE_FILE=$(resolve_cached_audio_path "$CACHE_INDEX_FILE" "$CACHE_BUCKET_DIR") || CACHE_FILE=""
     if [ -z "$CACHE_FILE" ]; then
-        CACHE_FILE="$(new_cache_audio_path "$CACHE_BUCKET_DIR")"
+        CACHE_FILE=$(new_cache_audio_path "$CACHE_BUCKET_DIR") || {
+            echo "Error: Failed to allocate a cache path in $CACHE_BUCKET_DIR" >&2
+            return 1
+        }
+    fi
+    if [ -z "$CACHE_FILE" ]; then
+        echo "Error: Cache path resolution produced an empty result for $CACHE_BUCKET_DIR" >&2
+        return 1
     fi
 }
 
@@ -1056,7 +1239,7 @@ parse_storygen_args() {
 }
 
 ensure_storygen_dirs() {
-    mkdir -p "$STORY_DIR" "$STATE_DIR" "$QUEUE_PENDING_DIR" "$QUEUE_PROCESSING_DIR" "$QUEUE_DONE_DIR" "$QUEUE_FAILED_DIR"
+    mkdir -p "$STORY_DIR" "$STATE_DIR" "${HALO_GENERATED_STORY_DIR:-$GENERATED_STORY_DIR_DEFAULT}" "$QUEUE_PENDING_DIR" "$QUEUE_PROCESSING_DIR" "$QUEUE_DONE_DIR" "$QUEUE_FAILED_DIR"
 }
 
 review_notice() {
@@ -2301,6 +2484,10 @@ PY
 
 resolve_story_file() {
     local candidate="$1"
+    local generated_dir
+
+    generated_dir="${HALO_GENERATED_STORY_DIR:-$GENERATED_STORY_DIR_DEFAULT}"
+
     if [ -f "$candidate" ]; then
         printf '%s\n' "$candidate"
         return 0
@@ -2316,15 +2503,44 @@ resolve_story_file() {
         printf '%s\n' "$candidate"
         return 0
     fi
+
+    if [[ "$1" != */* ]]; then
+        candidate="$1"
+        if [[ "$candidate" != *.txt ]]; then
+            candidate="${generated_dir}/${candidate}.txt"
+        else
+            candidate="${generated_dir}/${candidate}"
+        fi
+        if [ -f "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    fi
+
     return 1
 }
 
 resolve_review_file() {
     local candidate="$1"
+
     if [ -f "$candidate" ] && [[ "$candidate" == *.txt ]]; then
         printf '%s\n' "$candidate"
         return 0
     fi
+
+    if [[ "$candidate" != */* ]]; then
+        if [[ "$candidate" != *.txt ]]; then
+            candidate="${REVIEW_DIR}/${candidate}.txt"
+        else
+            candidate="${REVIEW_DIR}/${candidate}"
+        fi
+    fi
+
+    if [ -f "$candidate" ] && [[ "$candidate" == *.txt ]]; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+
     return 1
 }
 
@@ -2502,7 +2718,7 @@ handle_review() {
 
 list_stories() {
     mkdir -p "$STORY_DIR"
-    python3 - "$STORY_DIR" "$STORYGEN_PROMPT_FILE_DEFAULT" "$CACHE_DIR" "$HALO_TTS_CACHE_FORMAT_VERSION" "$HALO_TTS_TAIL_FADE_MS" "$HALO_TTS_TRAILING_SILENCE_MS" "$HALO_STORY_READ_MAX_CHARS" "$HALO_STORY_READ_MAX_WORDS" <<'PY'
+    PYTHONPATH="$HALO_SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 - "$STORY_DIR" "$STORYGEN_PROMPT_FILE_DEFAULT" "$CACHE_DIR" "$HALO_TTS_CACHE_FORMAT_VERSION" "$HALO_TTS_TAIL_FADE_MS" "$HALO_TTS_TRAILING_SILENCE_MS" "$HALO_STORY_READ_MAX_CHARS" "$HALO_STORY_READ_MAX_WORDS" <<'PY'
 import hashlib
 import datetime
 import pathlib
@@ -2564,9 +2780,18 @@ def render_cache_label(path: pathlib.Path) -> str:
     return 'YES' if single_story_cache_exists(text) else 'NO'
 
 
+def include_story(path: pathlib.Path) -> bool:
+    name = path.name
+    if name.startswith('.') or name == prompt_name:
+        return False
+    if name == 'rc.txt' or re.match(r'rc_.+\.txt\Z', name):
+        return False
+    return True
+
+
 files = [
     path for path in story_dir.glob('*.txt')
-    if path.is_file() and not path.name.startswith('.') and path.name != prompt_name
+    if path.is_file() and include_story(path)
 ]
 files.sort(key=lambda path: (path.stat().st_mtime, path.name), reverse=True)
 if not files:
@@ -2577,7 +2802,7 @@ print(f'{"MODIFIED":19} {"CACHED":6} STORY')
 for path in files:
     stamp = datetime.datetime.fromtimestamp(path.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')
     cached = render_cache_label(path)
-    print(f'{stamp} {cached:6} {path.name}')
+    print(f'{stamp} {cached:6} {path.stem}')
 PY
 }
 
@@ -2953,10 +3178,12 @@ PY
 store_story_file() {
     local topic="$1"
     local story_tmp="$2"
-    local filename target
+    local filename target output_dir
 
+    output_dir="${HALO_GENERATED_STORY_DIR:-$GENERATED_STORY_DIR_DEFAULT}"
+    mkdir -p "$output_dir"
     filename=$(build_story_filename "$topic" "$story_tmp")
-    target="$STORY_DIR/$filename"
+    target="$output_dir/$filename"
     if [ -e "$target" ]; then
         target="${target%.txt}__$(date -u +%s).txt"
     fi
@@ -3089,6 +3316,16 @@ process_storygen_queue() {
     release_queue_lock
 }
 
+run_storygen_queue_child() {
+    load_storygen_env
+    process_storygen_queue
+}
+
+start_storygen_queue_worker() {
+    ensure_storygen_dirs
+    nohup bash "$HALO_SELF" __process-storygen-queue >/dev/null 2>&1 &
+}
+
 wait_for_story_request() {
     local request_id="$1"
     local deadline request_dir state_label last_state last_notice_at now
@@ -3166,7 +3403,7 @@ wait_for_story_request() {
 }
 
 handle_storygen() {
-    local request_id story_path
+    local request_id
     load_storygen_env
 
     if [ "$STORYGEN_RENDER_CACHE_MODE" = true ]; then
@@ -3185,13 +3422,9 @@ handle_storygen() {
     fi
     request_id=$(enqueue_storygen_request "$STORYGEN_TOPIC" "$STORYGEN_MAX_WORDS")
     storygen_status "  Request id: $request_id"
-    process_storygen_queue || true
-    story_path=$(wait_for_story_request "$request_id") || return 1
-    if [ "$RENDER_ONLY" = true ]; then
-        printf '%s\n' "$story_path"
-    else
-        echo "HALO story ready: $story_path"
-    fi
+    storygen_status "  Queue status: queued"
+    start_storygen_queue_worker
+    printf '%s\n' "$request_id"
 }
 
 ensure_cache_mappings() {
@@ -3241,6 +3474,13 @@ case "$1" in
             exit 1
         fi
         run_story_bundle_assembly_child "$2" "$3"
+        exit $?
+        ;;
+    __process-storygen-queue)
+        if [ $# -ne 1 ]; then
+            exit 1
+        fi
+        run_storygen_queue_child
         exit $?
         ;;
     sensory)
@@ -3340,6 +3580,13 @@ case "$1" in
         fi
         REVIEW_FILE="$2"
         ;;
+    vq)
+        if [ $# -ne 1 ]; then
+            usage
+            exit 1
+        fi
+        QUEUE_VIEW_MODE=true
+        ;;
     speak)
         COMMENTARY_FILE="${HALO_COMMENTARY_FILE:-${HALO_ROOT}/commentary/manic-hal-lines.txt}"
         if [ $# -ne 1 ]; then
@@ -3389,6 +3636,11 @@ if [ "$LIST_STORIES_MODE" = true ]; then
     exit 0
 fi
 
+if [ "$QUEUE_VIEW_MODE" = true ]; then
+    show_storygen_queue_viewer
+    exit 0
+fi
+
 if [ "$LATENCY_COMMAND_MODE" = true ]; then
     show_latency_metrics
     exit 0
@@ -3414,11 +3666,6 @@ if [ "$STORYGEN_MODE" = true ]; then
     exit $?
 fi
 
-if ! tts_service_available; then
-    echo "Error: HALO XTTS service not available via any configured endpoint"
-    exit 1
-fi
-
 if [ "$READ_MODE" = true ]; then
     REQUEST_CLASS="story"
     sentence=$(python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n"), end="")' "$READ_FILE")
@@ -3442,7 +3689,7 @@ set_latency_text_chars "$sentence"
 
 mkdir -p "$CACHE_DIR"
 
-configure_cache_paths
+configure_cache_paths || exit 1
 TTS_ENDPOINT=$(current_tts_endpoint)
 TTS_MAX_TIME=$(current_tts_max_time)
 TTS_LABEL=$(tts_request_label)

@@ -37,6 +37,7 @@ halo --render-only read <story-name|filename.txt|/full/path/to/file.txt>
 halo review <filename.txt|/full/path/to/file.txt>
 halo --render-only review <filename.txt|/full/path/to/file.txt>
 halo list-stories
+halo vq
 halo storygen [-mw max_words] [optional topic]
 halo storygen -rc
 halo story-gen [-mw max_words] [optional topic]
@@ -60,7 +61,8 @@ The most common operator flows are:
 - render a HAL review into cache only: `halo --render-only review ./notes/essay.txt`
 - inspect recent latency data: `halo -l`
 - list story files and cache status: `halo list-stories`
-- generate and immediately queue a new story request: `halo storygen`
+- watch the live story queue: `halo vq`
+- generate a new story request and return the request id immediately: `halo storygen`
 - pre-render all uncached stories: `halo storygen -rc`
 
 ## Runtime Architecture
@@ -133,6 +135,8 @@ The story generation queue uses:
 - `lock/`
 
 The queue is file-backed so requests survive process restarts cleanly and can be inspected manually when necessary.
+
+Submitting `halo storygen` is non-blocking. The command enqueues the request, starts a detached queue worker, prints the request id, and returns immediately.
 
 ## Rendering And Playback
 
