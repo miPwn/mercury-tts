@@ -1,7 +1,13 @@
-Title: {title}
+Evaluate whether this source should proceed to HAL review generation.
 
-Approximate length: {word_count} words.
+Source type:
+{source_type}
 
-Classify this source for HAL review suitability.
+Source title:
+{source_title}
 
-{text}
+Requested length:
+{requested_length}
+
+Source content:
+{source_content}

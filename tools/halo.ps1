@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $RemoteHost = if ($env:HALO_REMOTE_HOST) { $env:HALO_REMOTE_HOST } else { 'falcon' }
-$RemoteCommand = if ($env:HALO_REMOTE_COMMAND) { $env:HALO_REMOTE_COMMAND } else { 'halo' }
+$RemoteCommand = if ($env:HALO_REMOTE_COMMAND) { $env:HALO_REMOTE_COMMAND } else { '/usr/local/bin/halo' }
 $RemoteWorkDir = if ($env:HALO_REMOTE_WORKDIR) { $env:HALO_REMOTE_WORKDIR } else { '' }
 $SshExe = if ($env:HALO_SSH_EXE) { $env:HALO_SSH_EXE } else { 'ssh.exe' }
 
@@ -93,5 +93,5 @@ if (-not [string]::IsNullOrWhiteSpace($RemoteWorkDir)) {
     $remoteCommandText = 'cd ' + (ConvertTo-BashSingleQuoted $RemoteWorkDir) + ' && ' + $remoteCommandText
 }
 
-& $SshExe $RemoteHost 'bash' '-lc' $remoteCommandText
+& $SshExe $RemoteHost $remoteCommandText
 exit $LASTEXITCODE

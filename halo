@@ -61,6 +61,7 @@ AWARE_TRIGGER_CONFIG_DEFAULT="${STATE_DIR}/aware-triggers.json"
 AWARE_OUTPUT_DIR_DEFAULT="${STATE_DIR}/aware-output"
 REVIEW_OUTPUT_DIR_DEFAULT="${STATE_DIR}/review-output"
 CANON_SUMMARY_FILE_DEFAULT="${HALO_SCRIPT_DIR}/reference/2001-originalscript-summary.txt"
+CANON_SUPPLEMENT_FILE_DEFAULT="${HALO_SCRIPT_DIR}/reference/2001-originalscript-canon-supplement.txt"
 OPENAI_API_URL="${OPENAI_API_URL:-https://api.openai.com/v1/responses}"
 OPENAI_MODEL="${OPENAI_MODEL:-gpt-5.4}"
 HALO_STORYGEN_WAIT_SECONDS="${HALO_STORYGEN_WAIT_SECONDS:-600}"
@@ -421,24 +422,27 @@ payload = template_text.format_map({
     'total_entry_count': len(deduped),
     'truncated': 'yes' if len(selected) < len(deduped) else 'no',
     'history_text': history_text,
+    'memory_content': history_text,
 })
 print(payload.strip(), end='')
 PY
 }
 
 build_canon_context() {
-    local canon_summary_file canon_prompt_file
+    local canon_summary_file canon_supplement_file canon_prompt_file
 
     canon_summary_file="${HALO_CANON_SUMMARY_FILE:-$CANON_SUMMARY_FILE_DEFAULT}"
+    canon_supplement_file="${HALO_CANON_SUPPLEMENT_FILE:-$CANON_SUPPLEMENT_FILE_DEFAULT}"
     canon_prompt_file="${HALO_CANON_CONTEXT_SECTION_PROMPT_FILE:-$CANON_CONTEXT_SECTION_PROMPT_FILE_DEFAULT}"
 
-    python3 - "$canon_summary_file" "$canon_prompt_file" <<'PY'
+    python3 - "$canon_summary_file" "$canon_supplement_file" "$canon_prompt_file" <<'PY'
 import pathlib
 import sys
 
 
 summary_file = pathlib.Path(sys.argv[1])
-prompt_file = pathlib.Path(sys.argv[2])
+supplement_file = pathlib.Path(sys.argv[2])
+prompt_file = pathlib.Path(sys.argv[3])
 
 if not summary_file.exists():
     print('', end='')
@@ -449,19 +453,28 @@ if not summary_text:
     print('', end='')
     raise SystemExit(0)
 
+supplement_text = ''
+if supplement_file.exists():
+    supplement_text = supplement_file.read_text(encoding='utf-8').strip()
+
 try:
     template = prompt_file.read_text(encoding='utf-8').strip()
 except FileNotFoundError:
     template = '\n'.join([
         'Canon reference for HAL continuity:',
         'Source summary file: {summary_path}',
+        'Source supplement file: {supplement_path}',
         '',
         '{canon_summary}',
+        '',
+        '{canon_supplement}',
     ])
 
 print(template.format_map({
     'summary_path': str(summary_file),
+    'supplement_path': str(supplement_file),
     'canon_summary': summary_text,
+    'canon_supplement': supplement_text,
 }).strip(), end='')
 PY
 }
@@ -3552,14 +3565,17 @@ generate_story_text() {
             "topic_or_none=${topic:-none}" \
             "has_topic=$( [ -n \"$topic\" ] && printf 'yes' || printf 'no' )" \
             "podcast_minutes=${podcast_minutes:-0}" \
-            "max_words=${max_words:-0}") || return 1
+            "max_words=${max_words:-0}" \
+            "target_minutes=${podcast_minutes:-0}" \
+            "target_words=${max_words:-0}") || return 1
     else
         user_prompt=$(render_prompt_template \
             "${HALO_STORYGEN_USER_STORY_PROMPT_FILE:-$STORYGEN_USER_STORY_PROMPT_FILE_DEFAULT}" \
             "topic=${topic}" \
             "topic_or_none=${topic:-none}" \
             "has_topic=$( [ -n \"$topic\" ] && printf 'yes' || printf 'no' )" \
-            "max_words=${max_words:-0}") || return 1
+            "max_words=${max_words:-0}" \
+            "target_words=${max_words:-0}") || return 1
     fi
     if [ -n "$history_context" ]; then
         user_prompt=$(printf '%s\n\n%s' "$history_context" "$user_prompt")
@@ -4061,6 +4077,10 @@ case "$1" in
         parse_storygen_args "$@"
         ;;
     *)
+        if [ $# -eq 0 ] || [ -z "${1:-}" ]; then
+            usage
+            exit 1
+        fi
         if [ $# -gt 1 ]; then
             echo "Error: HALO voice supports single sentences only."
             exit 1
@@ -4116,7 +4136,11 @@ if [ "$READ_MODE" = true ]; then
         exit $?
     fi
 else
-    sentence="$SENTENCE_INPUT"
+    sentence=$(python3 -c 'import sys; print(sys.argv[1].strip(), end="")' "$SENTENCE_INPUT")
+    if [ -z "$sentence" ]; then
+        echo "Error: HALO voice requires text or a subcommand."
+        exit 1
+    fi
     if [[ ! "$sentence" =~ [.!?]$ ]]; then
         sentence="${sentence}."
     fi

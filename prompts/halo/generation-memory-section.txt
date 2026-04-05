@@ -1,5 +1,7 @@
-Previous HAL stories and commentary to treat as memory:
-Entries included: {entry_count} of {total_entry_count}
-Older entries omitted because of context limits: {truncated}
+Memory continuity context:
+The following material consists of selected prior HAL outputs, archives, summaries, and commentary fragments.
+Use it as memory residue and continuity texture.
+Do not quote it mechanically or treat it as mandatory content.
+Let it shape recurrence, carryover, and internal history where useful.
 
-{history_text}
+{memory_content}

@@ -1,1 +1,13 @@
-Produce one short story in HAL's voice. It should be self-contained, atmospheric, and narratively coherent.
+Aware output kind: story
+
+Generate an aware-mode HAL story-like piece.
+This should feel as though a trigger, perception, or memory has caused HAL to unfold a more narrative or imagistic response.
+
+Requirements:
+- Keep HAL’s voice primary.
+- Allow scene, remembered event, or observational narrative to emerge.
+- Preserve continuity with present context.
+- Keep the result speakable, psychologically exact, and recognizably HAL.
+
+This mode should not become generic fiction.
+It should feel like HAL shaping perception and memory into a story because direct statement is temporarily insufficient.

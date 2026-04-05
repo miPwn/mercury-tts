@@ -23,7 +23,7 @@ The code still adds runtime context in code, such as timestamps, host details, t
 - `review-length-long.txt`: review size guidance for long sources.
 - `generation-memory-guidance.txt`: instruction block describing how prior outputs should be treated as memory.
 - `generation-memory-section.txt`: wrapper template for the aggregated previous stories and commentary text.
-- `canon-context-section.txt`: wrapper template for the compact canon summary passed into generation.
+- `canon-context-section.txt`: wrapper template for the compact canon summary and detailed canon supplement passed into generation.
 - `prompts-guide.md`: detailed prompt map and Mermaid diagram showing how the prompt layers connect.
 
 ## Template Variables
@@ -37,6 +37,8 @@ Story generation templates can use:
 - `{has_topic}`
 - `{max_words}`
 - `{podcast_minutes}`
+- `{target_words}`
+- `{target_minutes}`
 
 Generation memory section templates can use:
 
@@ -44,16 +46,23 @@ Generation memory section templates can use:
 - `{total_entry_count}`
 - `{truncated}`
 - `{history_text}`
+- `{memory_content}`
 
 Canon context section templates can use:
 
 - `{summary_path}`
+- `{supplement_path}`
 - `{canon_summary}`
+- `{canon_supplement}`
 
 Review precheck templates can use:
 
 - `{title}`
 - `{word_count}`
 - `{text}`
+- `{source_type}`
+- `{source_title}`
+- `{requested_length}`
+- `{source_content}`
 
 Keep placeholders intact unless you also update the code that fills them.

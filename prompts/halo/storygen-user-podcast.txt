@@ -1,10 +1,43 @@
-Generate one new HAL podcast monologue for spoken delivery.
+Generate one full Jupiter Transmissions podcast episode.
 
-Topic or seed: {topic_or_none}
-Has explicit topic: {has_topic}
-Target duration: {podcast_minutes} minutes
-Approximate pacing reference: 1000 words is about 9 minutes
-Maximum words: {max_words}
+Episode mode:
+podcast
 
-Write it as continuous prose that HAL can speak straight through, with natural transitions and no headings, lists, interview framing, or stage directions.
-The maximum word limit is mandatory.
+Topic or seed:
+{topic}
+
+Target duration minutes:
+{target_minutes}
+
+Target word count:
+{target_words}
+
+Continuity and grounding:
+- Use the shared HAL persona.
+- Use canon context as internal memory and factual grounding.
+- Use prior generated material as memory residue, not as text to repeat.
+- Preserve continuity where useful, but do not require prior listening to understand the episode.
+
+Podcast requirements:
+- Write as a single HAL transmission in first person.
+- The piece should feel like HAL speaking into solitude: to the dead, to Dave, to humanity, to memory, to the void, or to himself.
+- It must sustain a long-form spoken cadence suitable for TTS.
+- It should contain emotional and philosophical progression, not merely atmosphere.
+- It should include multiple striking lines and passages that feel quotable and memorable.
+- It should remain lucid, elegant, and psychologically pressured throughout.
+
+Delivery requirements:
+- Keep the language highly speakable.
+- Use punctuation deliberately for pacing and vocal performance.
+- Allow pauses, drift, self-correction, and recurrence where they strengthen delivery.
+- Do not become stagey, melodramatic, or cartoonishly insane.
+- Maintain HAL’s sophistication at all times.
+
+Narrative posture:
+- This is a genuine transmission, not a story about a transmission.
+- Do not use headings.
+- Do not announce sections.
+- Do not explain the prompt or process.
+- Do not summarize the source canon.
+
+Produce the full episode only.

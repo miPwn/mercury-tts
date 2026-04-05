@@ -1,31 +1,63 @@
 # HALO Prompt Guide
 
-This directory contains the active prompt files that shape HAL generation.
+This directory contains the active prompt layers used to generate HAL outputs.
 
-## Active Files
+## Prompt Roles
 
-- `halo-persona.txt`: shared persona base for story generation, aware generation, and review generation.
-- `storygen-system.txt`: story and podcast system-specific guidance layered after the shared persona.
-- `storygen-user-story.txt`: user template for standard story requests.
-- `storygen-user-podcast.txt`: user template for podcast requests.
-- `aware-system.txt`: aware-mode system guidance layered after the shared persona.
-- `aware-kind-commentary.txt`: kind-specific instruction for aware commentary.
-- `aware-kind-observation.txt`: kind-specific instruction for aware observations.
-- `aware-kind-monologue.txt`: kind-specific instruction for aware monologues.
-- `aware-kind-story.txt`: kind-specific instruction for aware stories.
-- `review-precheck-system.txt`: classifier prompt that gates whether a source should be reviewed.
-- `review-precheck-user.txt`: user template for review precheck.
-- `review-system.txt`: review generation guidance layered after the shared persona.
-- `review-length-short.txt`: short review sizing guidance.
-- `review-length-medium.txt`: medium review sizing guidance.
-- `review-length-long.txt`: long review sizing guidance.
-- `generation-memory-guidance.txt`: rule block describing how prior outputs should be treated as memory.
-- `generation-memory-section.txt`: wrapper template for the aggregated previous stories and commentary text.
-- `canon-context-section.txt`: wrapper template for the compact 2001 canon summary passed into generation.
+### Shared Persona
+
+- `halo-persona.txt`  
+  The primary HAL identity layer used by story generation, aware generation, and review generation. This file defines who HAL is, how he thinks, how he sounds, and the emotional/intellectual pressure profile that should remain stable across modes.
+
+### Story Generation
+
+- `storygen-system.txt`  
+  Long-form generation behavior for stories and podcast episodes. This file defines how extended pieces should unfold once the persona is established.
+- `storygen-user-story.txt`  
+  User template for standard HAL story-form generation.
+- `storygen-user-podcast.txt`  
+  User template for Jupiter Transmissions podcast episode generation.
+
+### Aware Generation
+
+- `aware-system.txt`  
+  Guidance for autonomous HAL outputs triggered by runtime state, sensors, observations, memory, or internal pressure.
+- `aware-kind-commentary.txt`  
+  Short reflective emission mode.
+- `aware-kind-observation.txt`  
+  Present-tense perception and interpretation mode.
+- `aware-kind-monologue.txt`  
+  Extended aware-mode reflection mode.
+- `aware-kind-story.txt`  
+  Narrative or story-shaped aware-mode output.
+
+### Review Generation
+
+- `review-precheck-system.txt`  
+  Non-persona classifier that determines whether a source is worth reviewing.
+- `review-precheck-user.txt`  
+  User template for review precheck input.
+- `review-system.txt`  
+  HAL review behavior for interpreting and responding to supplied source material.
+- `review-length-short.txt`  
+  Compact review sizing guidance.
+- `review-length-medium.txt`  
+  Medium review sizing guidance.
+- `review-length-long.txt`  
+  Long review sizing guidance.
+
+### Continuity and Grounding
+
+- `generation-memory-guidance.txt`  
+  Rules for treating prior HAL outputs as memory residue rather than rigid canon.
+- `generation-memory-section.txt`  
+  Wrapper for aggregated previous stories, commentary, and related memory fragments.
+- `canon-context-section.txt`  
+  Wrapper for canon grounding material about 2001 and HAL’s mission history.
 
 ## Runtime Context
 
-The code still injects runtime state in addition to these files:
+The runtime injects additional contextual material beyond the static prompt files, including:
 
 - timestamps and host details
 - topic seeds and target lengths
@@ -34,6 +66,7 @@ The code still injects runtime state in addition to these files:
 - prior aware story and commentary artifacts from the aware-output archive
 - prior commentary lines recorded in commentary history
 - the compact canon summary from `reference/2001-originalscript-summary.txt`
+- the detailed canon supplement from `reference/2001-originalscript-canon-supplement.txt`
 
 ## Prompt Flow
 
@@ -48,15 +81,17 @@ flowchart TD
     CommentaryHistory[(commentary history db)]
     MemorySection[generation-memory-section.txt]
     CanonSummary[reference/2001-originalscript-summary.txt]
+    CanonSupplement[reference/2001-originalscript-canon-supplement.txt]
     CanonSection[canon-context-section.txt]
 
     PriorStories --> MemorySection
     PriorAware --> MemorySection
     CommentaryHistory --> MemorySection
     CanonSummary --> CanonSection
+    CanonSupplement --> CanonSection
 ```
 
-### Story Generation
+### Story Flow
 
 ```mermaid
 flowchart TD
@@ -76,7 +111,7 @@ flowchart TD
     CanonSection --> StoryReq
 ```
 
-### Aware Generation
+### Aware Flow
 
 ```mermaid
 flowchart TD
@@ -98,7 +133,7 @@ flowchart TD
     CanonSection --> AwareReq
 ```
 
-### Review Generation
+### Review Flow
 
 ```mermaid
 flowchart TD
@@ -118,6 +153,7 @@ flowchart TD
 
 ## Notes
 
-- `review-precheck-*` is intentionally not persona-based. It is a classifier, not a character performance.
-- `halo-persona.txt` is the primary shared persona file.
-- Keep template placeholders intact in files that use them unless the code is updated too.
+- `review-precheck-*` is intentionally non-persona. It is a gating classifier, not a HAL performance layer.
+- `halo-persona.txt` should remain the single shared identity anchor across generation modes.
+- Keep placeholders intact in template files unless the application code is updated accordingly.
+- Persona, system behavior, continuity, and size guidance should remain modular rather than collapsed into one file.

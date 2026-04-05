@@ -37,6 +37,14 @@ def _render_prompt(template_text: str, **values: Any) -> str:
     return template_text.format_map(safe_values).strip()
 
 
+def _requested_length_label(word_count: int) -> str:
+    if word_count >= 700:
+        return "long"
+    if word_count >= 180:
+        return "medium"
+    return "short"
+
+
 def prepare_review_source(path: pathlib.Path, max_chars: int = 14000) -> dict[str, Any]:
     try:
         raw = path.read_text(encoding="utf-8", errors="ignore")
@@ -69,6 +77,10 @@ def prepare_review_source(path: pathlib.Path, max_chars: int = 14000) -> dict[st
 
 
 def build_review_precheck_prompts(payload: dict[str, Any]) -> dict[str, str]:
+    requested_length = _requested_length_label(int(payload.get("word_count", 0) or 0))
+    source_title = payload.get("title") or payload.get("source_name") or "untitled"
+    source_content = payload.get("text", "")
+
     system_prompt = _load_prompt_text(
         "HALO_REVIEW_PRECHECK_SYSTEM_PROMPT_FILE",
         "\n".join(
@@ -82,6 +94,12 @@ def build_review_precheck_prompts(payload: dict[str, Any]) -> dict[str, str]:
             ]
         ),
     )
+    system_prompt = "\n\n".join(
+        [
+            system_prompt.strip(),
+            "Output contract: return exactly one token: pass or fail.",
+        ]
+    ).strip()
     user_prompt = _render_prompt(
         _load_prompt_text(
             "HALO_REVIEW_PRECHECK_USER_PROMPT_FILE",
@@ -94,9 +112,13 @@ def build_review_precheck_prompts(payload: dict[str, Any]) -> dict[str, str]:
                 ]
             ),
         ),
-        title=payload.get("title") or payload.get("source_name"),
+        title=source_title,
         word_count=payload.get("word_count", 0),
-        text=payload.get("text", ""),
+        text=source_content,
+        source_type="text file",
+        source_title=source_title,
+        requested_length=requested_length,
+        source_content=source_content,
     )
     return {"system_prompt": system_prompt, "user_prompt": user_prompt}
 
@@ -105,6 +127,9 @@ def parse_review_precheck_decision(value: str) -> str:
     cleaned = value.strip().lower()
     if cleaned in {"pass", "fail"}:
         return cleaned
+    token_match = re.search(r"\b(pass|fail)\b", cleaned)
+    if token_match:
+        return token_match.group(1)
     try:
         payload = json.loads(cleaned)
     except json.JSONDecodeError as exc:
