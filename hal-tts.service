@@ -39,6 +39,9 @@ Environment="PATH=/usr/local/bin:/usr/bin:/bin"
 Environment="HOME=/opt/tts-pipeline"
 Environment="XDG_RUNTIME_DIR=/run/user/1000"
 Environment="PULSE_RUNTIME_PATH=/run/user/1000/pulse"
+Environment="HAL_DOTMATRIX_ENABLED=1"
+Environment="HAL_DOTMATRIX_QUEUE_DIR=/tmp/halo-dotmatrix/queue"
+Environment="HAL_DOTMATRIX_WAV_DIR=/tmp/halo-dotmatrix/wav"
 
 [Install]
 WantedBy=multi-user.target

@@ -17,6 +17,7 @@ It records:
 
 - Falcon host runtime: `/usr/local/bin/halo`
 - Falcon host runtime: `/usr/local/bin/hal`
+- Falcon host HAL daemon: `systemd:hal-tts.service`
 - Falcon K3s deployment path: `tts/hal-tts`
 - Archos primary XTTS dependency: `http://192.168.1.165:5003/api/tts`
 - Windows client wrapper path: `tools/halo.ps1`

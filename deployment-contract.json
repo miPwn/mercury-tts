@@ -28,6 +28,17 @@
         ]
       },
       {
+        "name": "falcon-hal-tts-daemon",
+        "environment": "falcon-host",
+        "kind": "service",
+        "status": "active",
+        "liveTarget": "systemd:hal-tts.service",
+        "sourcePaths": [
+          "streaming_safe_daemon.go",
+          "hal-tts.service"
+        ]
+      },
+      {
         "name": "falcon-k3s-hal-tts",
         "environment": "falcon-k3s",
         "kind": "k8s",
@@ -106,6 +117,16 @@
           "tools/install-halo-wsl-client.sh",
           "tools/install-xtts-portforwards.ps1",
           "tools/watch-xtts-portforwards.ps1"
+        ],
+        "requiresTouch": [
+          "deployment-contract.json"
+        ]
+      },
+      {
+        "name": "hal-host-daemon",
+        "triggers": [
+          "streaming_safe_daemon.go",
+          "hal-tts.service"
         ],
         "requiresTouch": [
           "deployment-contract.json"

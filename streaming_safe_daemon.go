@@ -43,6 +43,9 @@ var (
 	vbanTargetIP   = getEnvDefault("VBAN_TARGET_IP", "192.168.1.100")
 	vbanTargetPort = getEnvDefault("VBAN_TARGET_PORT", "6980")
 	vbanStreamName = getEnvDefault("VBAN_STREAM_NAME", "Falcon")
+	dotmatrixEnabled = getEnvDefault("HAL_DOTMATRIX_ENABLED", "0") == "1"
+	dotmatrixQueueDir = getEnvDefault("HAL_DOTMATRIX_QUEUE_DIR", "/tmp/halo-dotmatrix/queue")
+	dotmatrixWavDir = getEnvDefault("HAL_DOTMATRIX_WAV_DIR", "/tmp/halo-dotmatrix/wav")
 )
 
 type SpeakRequest struct {
@@ -465,6 +468,76 @@ time.Sleep(remaining)
 return nil
 }
 
+func copyFile(sourcePath, destinationPath string) error {
+	sourceFile, err := os.Open(sourcePath)
+	if err != nil {
+		return err
+	}
+	defer sourceFile.Close()
+
+	destinationFile, err := os.Create(destinationPath)
+	if err != nil {
+		return err
+	}
+	defer destinationFile.Close()
+
+	if _, err := io.Copy(destinationFile, sourceFile); err != nil {
+		return err
+	}
+
+	return destinationFile.Close()
+}
+
+func (d *StreamingDaemon) enqueueDotmatrixVisualization(chunk *TTSChunk) {
+	if !dotmatrixEnabled || chunk == nil || chunk.FilePath == "" {
+		return
+	}
+
+	if err := os.MkdirAll(dotmatrixQueueDir, 0755); err != nil {
+		log.Printf("WARN: Dotmatrix queue directory unavailable: %v", err)
+		return
+	}
+	if err := os.MkdirAll(dotmatrixWavDir, 0755); err != nil {
+		log.Printf("WARN: Dotmatrix wav directory unavailable: %v", err)
+		return
+	}
+
+	timestamp := time.Now().UnixNano()
+	queuedWavPath := filepath.Join(dotmatrixWavDir, fmt.Sprintf("%d_%d.wav", timestamp, chunk.Index))
+	if err := copyFile(chunk.FilePath, queuedWavPath); err != nil {
+		log.Printf("WARN: Dotmatrix wav staging failed for chunk %d: %v", chunk.Index, err)
+		return
+	}
+
+	payload := map[string]interface{}{
+		"wav_path":      queuedWavPath,
+		"text":          chunk.Text,
+		"created_at_ns": timestamp,
+	}
+
+	encodedPayload, err := json.Marshal(payload)
+	if err != nil {
+		_ = os.Remove(queuedWavPath)
+		log.Printf("WARN: Dotmatrix payload encoding failed for chunk %d: %v", chunk.Index, err)
+		return
+	}
+
+	finalPath := filepath.Join(dotmatrixQueueDir, fmt.Sprintf("%d_%d.json", timestamp, chunk.Index))
+	tempPath := finalPath + ".tmp"
+	if err := os.WriteFile(tempPath, encodedPayload, 0644); err != nil {
+		_ = os.Remove(queuedWavPath)
+		log.Printf("WARN: Dotmatrix queue write failed for chunk %d: %v", chunk.Index, err)
+		return
+	}
+
+	if err := os.Rename(tempPath, finalPath); err != nil {
+		_ = os.Remove(tempPath)
+		_ = os.Remove(queuedWavPath)
+		log.Printf("WARN: Dotmatrix queue finalize failed for chunk %d: %v", chunk.Index, err)
+		return
+	}
+}
+
 func (d *StreamingDaemon) streamingPlaybackOptimized(chunks []*TTSChunk, ttsStart time.Time) {
 	// LATENCY OPTIMIZATION: Setup predecessor chain for sequential coordination
 	for i := range chunks {
@@ -513,6 +586,7 @@ func (d *StreamingDaemon) streamingPlaybackOptimized(chunks []*TTSChunk, ttsStar
 			}
 			fileSize := fileInfo.Size()
 			log.Printf("FILE: Chunk %d validated - size: %d bytes, path: %s", chunk.Index, fileSize, chunk.FilePath)
+			d.enqueueDotmatrixVisualization(chunk)
 
 			// Execute audio playback synchronously to maintain order
 			log.Printf("AUDIO: Starting playback chunk %d - file: %s (mode: %s)", chunk.Index, chunk.FilePath, playbackMode)
