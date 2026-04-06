@@ -14,6 +14,8 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
     
     - name: Set up Go
       uses: actions/setup-go@v4
@@ -22,6 +24,26 @@ jobs:
     
     - name: Verify dependencies
       run: go mod verify
+
+    - name: Validate deployment contract
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        PUSH_BEFORE_SHA: ${{ github.event.before }}
+      run: |
+        BASE_REF=""
+        if [ "$EVENT_NAME" = "pull_request" ]; then
+          BASE_REF="$PR_BASE_SHA"
+        else
+          BASE_REF="$PUSH_BEFORE_SHA"
+        fi
+        python3 scripts/validate_deployment_contract.py --check-changed --base-ref "$BASE_REF"
+
+    - name: Test deployment tooling
+      run: python3 -m unittest tests.test_deployment_tools
+
+    - name: Build release bundles
+      run: python3 scripts/build_release_bundle.py
     
     - name: Build all components
       run: |
@@ -65,6 +87,12 @@ jobs:
       with:
         name: tts-pipeline-binaries
         path: bin/
+
+    - name: Archive release bundles
+      uses: actions/upload-artifact@v4
+      with:
+        name: mercury-tts-release-bundles
+        path: dist/release-bundles/
 
   license-check:
     runs-on: ubuntu-latest

@@ -1,0 +1,69 @@
+name: Mercury TTS K3s Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      remote_repo_path:
+        description: Falcon repo checkout to update before deployment.
+        required: true
+        type: string
+        default: /home/mipwn/dev/mercury-tts
+      image_tag:
+        description: Optional HAL TTS image tag override.
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate deployment contract
+        run: python3 scripts/validate_deployment_contract.py
+
+      - name: Test deployment tooling
+        run: python3 -m unittest tests.test_deployment_tools
+
+      - name: Configure SSH
+        env:
+          SSH_HOST: ${{ secrets.FALCON_SSH_HOST }}
+          SSH_USER: ${{ secrets.FALCON_SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.FALCON_SSH_PRIVATE_KEY }}
+          SSH_PORT: ${{ vars.FALCON_SSH_PORT }}
+        run: |
+          set -euo pipefail
+          : "${SSH_HOST:?Missing FALCON_SSH_HOST secret}"
+          : "${SSH_USER:?Missing FALCON_SSH_USER secret}"
+          : "${SSH_PRIVATE_KEY:?Missing FALCON_SSH_PRIVATE_KEY secret}"
+          SSH_PORT="${SSH_PORT:-22}"
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -p "$SSH_PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts
+
+      - name: Sync repo and deploy hal-tts
+        env:
+          SSH_HOST: ${{ secrets.FALCON_SSH_HOST }}
+          SSH_USER: ${{ secrets.FALCON_SSH_USER }}
+          SSH_PORT: ${{ vars.FALCON_SSH_PORT }}
+          REMOTE_REPO: ${{ inputs.remote_repo_path }}
+          IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
+        run: |
+          set -euo pipefail
+          SSH_PORT="${SSH_PORT:-22}"
+          ARCHIVE="/tmp/mercury-tts-${GITHUB_RUN_ID}.tgz"
+          IMAGE_TAG="${IMAGE_TAG_INPUT:-gh-${GITHUB_RUN_ID}}"
+          tar \
+            --exclude=.git \
+            --exclude=.venv \
+            --exclude=dist \
+            --exclude=__pycache__ \
+            -czf repo.tgz .
+          scp -P "$SSH_PORT" repo.tgz "$SSH_USER@$SSH_HOST:$ARCHIVE"
+          ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "mkdir -p '$REMOTE_REPO' && tar -xzf '$ARCHIVE' -C '$REMOTE_REPO' && rm -f '$ARCHIVE' && chmod +x '$REMOTE_REPO/deploy-hal-tts.sh' && cd '$REMOTE_REPO' && HAL_TTS_IMAGE_TAG='$IMAGE_TAG' ./deploy-hal-tts.sh"

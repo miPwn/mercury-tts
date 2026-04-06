@@ -31,6 +31,7 @@ func createMockTTSServer() *httptest.Server {
 
 func TestSequentialOrdering(t *testing.T) {
 	t.Log("Testing sequential audio chunk ordering")
+	requireLocalDaemon(t)
 	
 	mockServer := createMockTTSServer()
 	defer mockServer.Close()
@@ -71,6 +72,7 @@ func TestSequentialOrdering(t *testing.T) {
 
 func TestConcurrentRequestHandling(t *testing.T) {
 	t.Log("Testing concurrent request handling without race conditions")
+	requireLocalDaemon(t)
 	
 	sentences := []string{"Concurrent test sentence one", "Concurrent test sentence two"}
 	reqData := map[string]interface{}{
@@ -119,6 +121,7 @@ func TestConcurrentRequestHandling(t *testing.T) {
 
 func TestHealthEndpoint(t *testing.T) {
 	t.Log("Testing daemon health endpoint")
+	requireLocalDaemon(t)
 	
 	resp, err := http.Get("http://localhost:8091/health")
 	if err != nil {
@@ -149,6 +152,7 @@ func TestHealthEndpoint(t *testing.T) {
 
 func TestErrorHandling(t *testing.T) {
 	t.Log("Testing error handling for invalid requests")
+	requireLocalDaemon(t)
 	
 	// Test empty request
 	resp, err := http.Post("http://localhost:8091/speak", "application/json", bytes.NewBuffer([]byte("{}")))
@@ -176,6 +180,7 @@ func TestErrorHandling(t *testing.T) {
 
 func TestFileCleanup(t *testing.T) {
 	t.Log("Testing temporary file cleanup")
+	requireLocalDaemon(t)
 	
 	tempDir := "/tmp/streaming_safe_daemon"
 	

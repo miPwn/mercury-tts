@@ -22,6 +22,26 @@ The current production-oriented path is the `halo` runtime in this repo. It is r
 
 The companion `hal` pipeline is separate and should be treated as independent infrastructure. The details are in [docs/architecture/voice-architecture.md](docs/architecture/voice-architecture.md).
 
+## Deployment Guardrails
+
+This repo now carries a machine-readable deployment contract at `deployment-contract.json`.
+
+Use it as the first source of truth when changing:
+
+- Falcon host runtimes such as `/usr/local/bin/halo` and `/usr/local/bin/hal`
+- Falcon K3s deployment assets for `hal-tts` and XTTS support paths
+- Windows wrapper and port-forward tooling under `tools/`
+- cross-repo integration points such as playback queue submission and dotmatrix spool writes
+
+Validate it locally with:
+
+```bash
+python3 scripts/validate_deployment_contract.py
+```
+
+The workflow and operator rules are documented in [docs/deployment-contract.md](docs/deployment-contract.md).
+The manual and GitHub-driven deploy flow is documented in [docs/deployment-workflow.md](docs/deployment-workflow.md).
+
 ## Command Surface
 
 The `halo` command currently supports:

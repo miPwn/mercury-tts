@@ -1,0 +1,71 @@
+name: Mercury TTS Host Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      runtime:
+        description: Runtime to install on Falcon.
+        required: true
+        type: choice
+        options:
+          - halo
+          - hal
+        default: halo
+      remote_repo_path:
+        description: Falcon repo checkout to update before installation.
+        required: true
+        type: string
+        default: /home/mipwn/dev/mercury-tts
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate deployment contract
+        run: python3 scripts/validate_deployment_contract.py
+
+      - name: Test deployment tooling
+        run: python3 -m unittest tests.test_deployment_tools
+
+      - name: Configure SSH
+        env:
+          SSH_HOST: ${{ secrets.FALCON_SSH_HOST }}
+          SSH_USER: ${{ secrets.FALCON_SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.FALCON_SSH_PRIVATE_KEY }}
+          SSH_PORT: ${{ vars.FALCON_SSH_PORT }}
+        run: |
+          set -euo pipefail
+          : "${SSH_HOST:?Missing FALCON_SSH_HOST secret}"
+          : "${SSH_USER:?Missing FALCON_SSH_USER secret}"
+          : "${SSH_PRIVATE_KEY:?Missing FALCON_SSH_PRIVATE_KEY secret}"
+          SSH_PORT="${SSH_PORT:-22}"
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -p "$SSH_PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts
+
+      - name: Sync repo and deploy runtime
+        env:
+          SSH_HOST: ${{ secrets.FALCON_SSH_HOST }}
+          SSH_USER: ${{ secrets.FALCON_SSH_USER }}
+          SSH_PORT: ${{ vars.FALCON_SSH_PORT }}
+          REMOTE_REPO: ${{ inputs.remote_repo_path }}
+          RUNTIME: ${{ inputs.runtime }}
+        run: |
+          set -euo pipefail
+          SSH_PORT="${SSH_PORT:-22}"
+          ARCHIVE="/tmp/mercury-tts-${GITHUB_RUN_ID}.tgz"
+          tar \
+            --exclude=.git \
+            --exclude=.venv \
+            --exclude=dist \
+            --exclude=__pycache__ \
+            -czf repo.tgz .
+          scp -P "$SSH_PORT" repo.tgz "$SSH_USER@$SSH_HOST:$ARCHIVE"
+          ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "mkdir -p '$REMOTE_REPO' && tar -xzf '$ARCHIVE' -C '$REMOTE_REPO' && rm -f '$ARCHIVE' && chmod +x '$REMOTE_REPO/scripts/deploy-falcon-runtime.sh' '$REMOTE_REPO/halo' '$REMOTE_REPO/hal' && cd '$REMOTE_REPO' && ./scripts/deploy-falcon-runtime.sh --runtime '$RUNTIME'"

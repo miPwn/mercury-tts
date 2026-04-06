@@ -1,0 +1,43 @@
+name: Mercury TTS Release Bundles
+
+on:
+  workflow_dispatch:
+  release:
+    types: [ published ]
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.22'
+
+    - name: Validate deployment contract
+      run: python3 scripts/validate_deployment_contract.py
+
+    - name: Test deployment tooling
+      run: python3 -m unittest tests.test_deployment_tools
+
+    - name: Build runtime artifacts
+      run: |
+        mkdir -p dist/host-bin
+        go build -o dist/host-bin/streaming_safe_daemon ./streaming_safe_daemon.go
+
+    - name: Build release bundles
+      run: python3 scripts/build_release_bundle.py
+
+    - name: Upload release bundles
+      uses: actions/upload-artifact@v4
+      with:
+        name: mercury-tts-release-bundles-${{ github.run_id }}
+        path: |
+          dist/release-bundles/
+          dist/host-bin/

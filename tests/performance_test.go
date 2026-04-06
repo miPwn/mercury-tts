@@ -121,6 +121,7 @@ func BenchmarkEndToEndLatency(b *testing.B) {
 
 func TestLatencyRegression(t *testing.T) {
 	t.Log("Testing for performance regression")
+	requireLocalDaemon(t)
 	
 	// Baseline measurements
 	baselines := map[string]time.Duration{
@@ -181,6 +182,7 @@ func TestLatencyRegression(t *testing.T) {
 
 func TestThroughput(t *testing.T) {
 	t.Log("Testing system throughput capacity")
+	requireLocalDaemon(t)
 	
 	sentences := []string{"Throughput test sentence"}
 	reqData := map[string]interface{}{
@@ -240,6 +242,7 @@ func BenchmarkMemoryUsage(b *testing.B) {
 
 func TestAudioQuality(t *testing.T) {
 	t.Log("Testing audio output quality and consistency")
+	requireLocalDaemon(t)
 	
 	sentences := []string{"Audio quality test sentence for consistency checking"}
 	reqData := map[string]interface{}{
@@ -273,6 +276,7 @@ func TestStressTest(t *testing.T) {
 	}
 	
 	t.Log("Running stress test - high load scenario")
+	requireLocalDaemon(t)
 	
 	sentences := []string{
 		"Stress test sentence number one with extended content",
