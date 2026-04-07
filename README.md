@@ -146,6 +146,7 @@ The runtime is centered on `HALO_ROOT`, with these important subdirectories:
 
 - cache root: `cache/halo-xtts/`
 - story source files: `story/`
+- podcast source files: `podcast/`
 - runtime state: `state/halo/`
 - latency state file: `state/halo/latency-metrics.json`
 - story generation queue: `state/halo/storygen-queue/`
@@ -222,6 +223,8 @@ Cache layout:
 
 - instant utterances: `cache/halo-xtts/instant/`
 - commentary samples: `cache/halo-xtts/commentary/`
+- single-file podcast renders: `cache/halo-xtts/podcast/single/`
+- chunked podcast bundles: `cache/halo-xtts/podcast/bundles/<story-hash>/`
 - single-file story renders: `cache/halo-xtts/story/single/`
 - chunked story bundles: `cache/halo-xtts/story/bundles/<story-hash>/`
 
@@ -281,6 +284,7 @@ Behavior:
 - generated stories are immediately rendered into cache
 - `-mw` enforces a max-word limit on the saved text
 - `-pc` switches generation to podcast mode and converts minutes to an approximate word limit using `1000 words ~= 9 minutes`
+- podcast-mode generated text is written into the podcast directory and rendered into the podcast cache buckets
 - `storygen -rc` walks the existing story directory and renders only the uncached stories
 
 The default story prompt is defined in the runtime, but you can override it with either an environment variable or a prompt file under the state/story tree.

@@ -1,0 +1,31 @@
+services:
+  halo-runtime:
+    container_name: halo-runtime
+    build:
+      context: .
+      dockerfile: Dockerfile.halo-runtime
+    image: halo-runtime:local
+    restart: unless-stopped
+    network_mode: host
+    pid: host
+    user: "${HALO_RUNTIME_UID:-1000}:${HALO_RUNTIME_GID:-1000}"
+    working_dir: /opt/halo-app
+    environment:
+      HALO_ROOT: ${HALO_ROOT:-/mnt/dkstorage/hal-system-monitor}
+      HALO_STORYGEN_ENV_FILE: ${HALO_STORYGEN_ENV_FILE:-/mnt/dkstorage/hal-system-monitor/state/halo/storygen.env}
+      HALO_DOTMATRIX_QUEUE_DIR: ${HALO_DOTMATRIX_QUEUE_DIR:-/tmp/halo-dotmatrix/queue}
+      HALO_PLAYBACK_MODE: ${HALO_PLAYBACK_MODE:-queue}
+      HALO_DOTMATRIX_ENABLED: ${HALO_DOTMATRIX_ENABLED:-0}
+      HALO_RUNTIME_UID: ${HALO_RUNTIME_UID:-1000}
+      HALO_RUNTIME_GID: ${HALO_RUNTIME_GID:-1000}
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ${HALO_ROOT:-/mnt/dkstorage/hal-system-monitor}:${HALO_ROOT:-/mnt/dkstorage/hal-system-monitor}
+      - /tmp/halo-dotmatrix:/tmp/halo-dotmatrix
+      - /etc/localtime:/etc/localtime:ro
+    healthcheck:
+      test: ["CMD-SHELL", "test -x /opt/halo-app/halo && test -d ${HALO_ROOT:-/mnt/dkstorage/hal-system-monitor}"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

@@ -1,21 +1,24 @@
 {
 	"folders": [
-		{
-			"path": "."
-		},
-		{
-			"path": "../hal-sysmon"
-		},
-		{
-			"path": "../tts-player-queue-service"
-		},
-		{
-			"path": "../mercury-voice-recognition"
-		},
-		{
+    {
+      "path": ".",
+    },
+    {
+      "path": "../hal-sysmon",
+    },
+    {
+      "path": "../tts-player-queue-service",
+    },
+    {
+      "path": "../mercury-voice-recognition",
+    },
+    {
       "path": "../hal-display",
-    }
-	],
+    },
+    {
+      "path": "../hal-voice-recognition",
+    },
+  ],
 	"settings": {
 		"workbench.colorCustomizations": {
 			"activityBar.background": "#eb8d70",

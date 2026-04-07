@@ -5,11 +5,22 @@
       {
         "name": "falcon-halo-runtime",
         "environment": "falcon-host",
-        "kind": "script",
+        "kind": "container-wrapper",
         "status": "active",
         "liveTarget": "/usr/local/bin/halo",
         "sourcePaths": [
+          "Dockerfile.halo-runtime",
+          "docker-compose.halo-runtime.yml",
           "halo",
+          "halo_cache.py",
+          "halo_review.py",
+          "halo_state",
+          "prompts",
+          "reference",
+          "requirements-state.txt",
+          "scripts/halo-container-entrypoint.sh",
+          "scripts/halo-container-wrapper.sh",
+          "sensory",
           "scripts/deploy-falcon-runtime.sh",
           "tools/halo.ps1",
           "tools/halo-wsl-client.sh",
@@ -22,10 +33,7 @@
         "kind": "script",
         "status": "active",
         "liveTarget": "/usr/local/bin/hal",
-        "sourcePaths": [
-          "hal",
-          "scripts/deploy-falcon-runtime.sh"
-        ]
+        "sourcePaths": ["hal", "scripts/deploy-falcon-runtime.sh"]
       },
       {
         "name": "falcon-hal-tts-daemon",
@@ -33,10 +41,7 @@
         "kind": "service",
         "status": "active",
         "liveTarget": "systemd:hal-tts.service",
-        "sourcePaths": [
-          "streaming_safe_daemon.go",
-          "hal-tts.service"
-        ]
+        "sourcePaths": ["streaming_safe_daemon.go", "hal-tts.service"]
       },
       {
         "name": "falcon-k3s-hal-tts",
@@ -57,9 +62,7 @@
         "kind": "api",
         "status": "external",
         "liveTarget": "http://192.168.1.165:5003/api/tts",
-        "sourcePaths": [
-          "halo"
-        ]
+        "sourcePaths": ["halo"]
       },
       {
         "name": "windows-halo-wrapper",
@@ -80,27 +83,21 @@
         "targetRepo": "tts-player-queue-service",
         "kind": "http",
         "pathOrEndpoint": "http://127.0.0.1:18080/api/tts/play",
-        "sourcePaths": [
-          "halo"
-        ]
+        "sourcePaths": ["halo"]
       },
       {
         "name": "hal-sysmon-latency-state",
         "targetRepo": "hal-sysmon",
         "kind": "state",
         "pathOrEndpoint": "/mnt/dkstorage/hal-system-monitor/state/halo/latency-metrics.json",
-        "sourcePaths": [
-          "halo"
-        ]
+        "sourcePaths": ["halo"]
       },
       {
         "name": "dotmatrix-spool",
         "targetRepo": "hal-display",
         "kind": "filesystem",
         "pathOrEndpoint": "/tmp/halo-dotmatrix/queue",
-        "sourcePaths": [
-          "halo"
-        ]
+        "sourcePaths": ["halo"]
       }
     ]
   },
@@ -109,8 +106,13 @@
       {
         "name": "halo-runtime-and-wrappers",
         "triggers": [
+          "Dockerfile.halo-runtime",
+          "docker-compose.halo-runtime.yml",
           "halo",
           "hal",
+          "requirements-state.txt",
+          "scripts/halo-container-entrypoint.sh",
+          "scripts/halo-container-wrapper.sh",
           "scripts/deploy-falcon-runtime.sh",
           "tools/halo.ps1",
           "tools/halo-wsl-client.sh",
@@ -118,19 +120,12 @@
           "tools/install-xtts-portforwards.ps1",
           "tools/watch-xtts-portforwards.ps1"
         ],
-        "requiresTouch": [
-          "deployment-contract.json"
-        ]
+        "requiresTouch": ["deployment-contract.json"]
       },
       {
         "name": "hal-host-daemon",
-        "triggers": [
-          "streaming_safe_daemon.go",
-          "hal-tts.service"
-        ],
-        "requiresTouch": [
-          "deployment-contract.json"
-        ]
+        "triggers": ["streaming_safe_daemon.go", "hal-tts.service"],
+        "requiresTouch": ["deployment-contract.json"]
       },
       {
         "name": "k8s-and-runtime-deployments",
@@ -141,9 +136,7 @@
           "k8s/hal-tts-deployment.yaml",
           "k8s/coqui-xtts-deployment.yaml"
         ],
-        "requiresTouch": [
-          "deployment-contract.json"
-        ]
+        "requiresTouch": ["deployment-contract.json"]
       }
     ]
   }

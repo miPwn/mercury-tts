@@ -13,7 +13,7 @@ HALO_TTS_PRIMARY_HOST="${HALO_TTS_PRIMARY_HOST:-192.168.1.165}"
 XTTS_ENDPOINT_INSTANT="${HALO_TTS_ENDPOINT_INSTANT:-http://${HALO_TTS_PRIMARY_HOST}:5003/api/tts}"
 XTTS_ENDPOINT_STORY="${HALO_TTS_ENDPOINT_STORY:-${HALO_TTS_ENDPOINT_BATCH:-http://${HALO_TTS_PRIMARY_HOST}:5004/api/tts}}"
 XTTS_ENDPOINT_INSTANT_FALLBACK="${HALO_TTS_ENDPOINT_INSTANT_FALLBACK:-http://127.0.0.1:5003/api/tts}"
-XTTS_ENDPOINT_STORY_FALLBACK="${HALO_TTS_ENDPOINT_STORY_FALLBACK:-http://127.0.0.1:5003/api/tts}"
+XTTS_ENDPOINT_STORY_FALLBACK="${HALO_TTS_ENDPOINT_STORY_FALLBACK:-http://127.0.0.1:5004/api/tts}"
 HALO_TTS_PRIMARY_ROUTE_LABEL="${HALO_TTS_PRIMARY_ROUTE_LABEL:-Archos}"
 HALO_TTS_FALLBACK_ROUTE_LABEL="${HALO_TTS_FALLBACK_ROUTE_LABEL:-Falcon}"
 SPEAKER_ID="HAL-006"
@@ -21,9 +21,11 @@ LANGUAGE="en"
 HALO_ROOT="${HALO_ROOT:-/mnt/dkstorage/hal-system-monitor}"
 CACHE_DIR="${HALO_ROOT}/cache/halo-xtts"
 STORY_DIR="${HALO_ROOT}/story"
+PODCAST_DIR="${HALO_ROOT}/podcast"
 REVIEW_DIR="${HALO_ROOT}/review"
 STATE_DIR="${HALO_ROOT}/state/halo"
 GENERATED_STORY_DIR_DEFAULT="${STATE_DIR}/generated-stories"
+GENERATED_PODCAST_DIR_DEFAULT="${PODCAST_DIR}"
 COMMENTARY_HISTORY_DB_DEFAULT="${STATE_DIR}/commentary-history.sqlite3"
 HALO_COMMENTARY_SIMILARITY_THRESHOLD="${HALO_COMMENTARY_SIMILARITY_THRESHOLD:-0.74}"
 HALO_COMMENTARY_RECENT_SIMILARITY_WINDOW="${HALO_COMMENTARY_RECENT_SIMILARITY_WINDOW:-24}"
@@ -991,8 +993,18 @@ cache_bucket_dir_for_category() {
         commentary)
             printf '%s\n' "$CACHE_DIR/commentary"
             ;;
+        podcast)
+            printf '%s\n' "$CACHE_DIR/podcast/single"
+            ;;
         story)
             printf '%s\n' "$CACHE_DIR/story/single"
+            ;;
+        podcast-bundle)
+            if [ -n "$CACHE_BUNDLE_DIR" ]; then
+                printf '%s\n' "$CACHE_BUNDLE_DIR"
+            else
+                printf '%s\n' "$CACHE_DIR/podcast/bundles/ad-hoc"
+            fi
             ;;
         story-bundle)
             if [ -n "$CACHE_BUNDLE_DIR" ]; then
@@ -1012,9 +1024,44 @@ story_bundle_dir() {
     printf '%s\n' "$CACHE_DIR/story/bundles/$story_hash"
 }
 
+podcast_bundle_dir() {
+    local story_hash="$1"
+    printf '%s\n' "$CACHE_DIR/podcast/bundles/$story_hash"
+}
+
+bundle_dir_for_format() {
+    local content_format="$1"
+    local story_hash="$2"
+
+    case "$content_format" in
+        podcast)
+            podcast_bundle_dir "$story_hash"
+            ;;
+        story|*)
+            story_bundle_dir "$story_hash"
+            ;;
+    esac
+}
+
+storygen_format_for_file() {
+    local story_file="$1"
+    local generated_podcast_dir
+
+    generated_podcast_dir="${HALO_GENERATED_PODCAST_DIR:-$GENERATED_PODCAST_DIR_DEFAULT}"
+
+    case "$story_file" in
+        "$PODCAST_DIR"/*|"$generated_podcast_dir"/*)
+            printf '%s\n' 'podcast'
+            ;;
+        *)
+            printf '%s\n' 'story'
+            ;;
+    esac
+}
+
 story_manifest_path_for_story_file() {
     local story_file="$1"
-    local story_hash
+    local story_hash content_format
 
     story_hash=$(python3 - "$story_file" <<'PY'
 import hashlib
@@ -1026,7 +1073,9 @@ print(hashlib.sha256(text.encode('utf-8')).hexdigest())
 PY
 ) || return 1
 
-    printf '%s\n' "$(story_bundle_dir "$story_hash")/playlist.txt"
+    content_format=$(storygen_format_for_file "$story_file") || return 1
+
+    printf '%s\n' "$(bundle_dir_for_format "$content_format" "$story_hash")/playlist.txt"
 }
 
 story_slug_for_file() {
@@ -1618,7 +1667,7 @@ parse_storygen_args() {
 }
 
 ensure_storygen_dirs() {
-    mkdir -p "$STORY_DIR" "$STATE_DIR" "${HALO_GENERATED_STORY_DIR:-$GENERATED_STORY_DIR_DEFAULT}" "$QUEUE_PENDING_DIR" "$QUEUE_PROCESSING_DIR" "$QUEUE_DONE_DIR" "$QUEUE_FAILED_DIR"
+    mkdir -p "$STORY_DIR" "$PODCAST_DIR" "$STATE_DIR" "${HALO_GENERATED_STORY_DIR:-$GENERATED_STORY_DIR_DEFAULT}" "${HALO_GENERATED_PODCAST_DIR:-$GENERATED_PODCAST_DIR_DEFAULT}" "$QUEUE_PENDING_DIR" "$QUEUE_PROCESSING_DIR" "$QUEUE_DONE_DIR" "$QUEUE_FAILED_DIR"
 }
 
 review_notice() {
@@ -2886,9 +2935,10 @@ PY
 
 resolve_story_file() {
     local candidate="$1"
-    local generated_dir
+    local generated_dir generated_podcast_dir
 
     generated_dir="${HALO_GENERATED_STORY_DIR:-$GENERATED_STORY_DIR_DEFAULT}"
+    generated_podcast_dir="${HALO_GENERATED_PODCAST_DIR:-$GENERATED_PODCAST_DIR_DEFAULT}"
 
     if [ -f "$candidate" ]; then
         printf '%s\n' "$candidate"
@@ -2909,9 +2959,33 @@ resolve_story_file() {
     if [[ "$1" != */* ]]; then
         candidate="$1"
         if [[ "$candidate" != *.txt ]]; then
+            candidate="${PODCAST_DIR}/${candidate}.txt"
+        else
+            candidate="${PODCAST_DIR}/${candidate}"
+        fi
+    fi
+    if [ -f "$candidate" ]; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+
+    if [[ "$1" != */* ]]; then
+        candidate="$1"
+        if [[ "$candidate" != *.txt ]]; then
             candidate="${generated_dir}/${candidate}.txt"
         else
             candidate="${generated_dir}/${candidate}"
+        fi
+        if [ -f "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+
+        candidate="$1"
+        if [[ "$candidate" != *.txt ]]; then
+            candidate="${generated_podcast_dir}/${candidate}.txt"
+        else
+            candidate="${generated_podcast_dir}/${candidate}"
         fi
         if [ -f "$candidate" ]; then
             printf '%s\n' "$candidate"
@@ -3371,7 +3445,7 @@ PY
 
 render_story_in_chunks() {
     local story_file="$1"
-    local story_hash bundle_dir chunk_dir manifest_path manifest_tmp chunk_file chunk_text cache_path chunk_count chunk_render_started_ms chunk_route_file observed_route manifest_text
+    local story_hash bundle_dir chunk_dir manifest_path manifest_tmp chunk_file chunk_text cache_path chunk_count chunk_render_started_ms chunk_route_file observed_route manifest_text content_format cache_category content_label
 
     story_hash=$(python3 - "$story_file" <<'PY'
 import hashlib
@@ -3383,8 +3457,20 @@ print(hashlib.sha256(text.encode('utf-8')).hexdigest())
 PY
 ) || return 1
 
+    content_format=$(storygen_format_for_file "$story_file") || return 1
+    bundle_dir=$(bundle_dir_for_format "$content_format" "$story_hash") || return 1
+    case "$content_format" in
+        podcast)
+            cache_category="podcast-bundle"
+            content_label="Podcast"
+            ;;
+        story|*)
+            cache_category="story-bundle"
+            content_label="Story"
+            ;;
+    esac
+
     chunk_dir=$(mktemp -d "${STATE_DIR}/story-read.XXXXXX") || return 1
-    bundle_dir=$(story_bundle_dir "$story_hash")
     mkdir -p "$bundle_dir"
     manifest_path="${bundle_dir}/playlist.txt"
     manifest_tmp="${manifest_path}.tmp"
@@ -3399,7 +3485,7 @@ PY
             LATENCY_RENDER_ROUTE="cache"
             LATENCY_CHUNK_COUNT="$chunk_count"
             echo "HALO reading: $story_file"
-            echo "  Story playlist cache hit"
+            echo "  ${content_label} playlist cache hit"
             play_story_playlist "$manifest_path" || return 1
             persist_latency_snapshot
             echo "HALO processing complete."
@@ -3438,7 +3524,7 @@ PY
             rm -rf "$chunk_dir"
             return 1
         }
-        cache_path=$(HALO_INTERNAL_READ_CHILD=1 HALO_INTERNAL_LATENCY_CHILD=1 HALO_INTERNAL_ROUTE_FILE="$chunk_route_file" HALO_TTS_REQUEST_CLASS=story HALO_TTS_CACHE_CATEGORY=story-bundle HALO_TTS_CACHE_BUNDLE_DIR="$bundle_dir" bash "$HALO_SELF" --render-only "$chunk_text") || {
+        cache_path=$(HALO_INTERNAL_READ_CHILD=1 HALO_INTERNAL_LATENCY_CHILD=1 HALO_INTERNAL_ROUTE_FILE="$chunk_route_file" HALO_TTS_REQUEST_CLASS=story HALO_TTS_CACHE_CATEGORY="$cache_category" HALO_TTS_CACHE_BUNDLE_DIR="$bundle_dir" bash "$HALO_SELF" --render-only "$chunk_text") || {
             rm -f "$chunk_route_file"
             rm -f "$manifest_tmp"
             rm -rf "$chunk_dir"
@@ -3553,7 +3639,13 @@ generate_story_text() {
     local max_words="$2"
     local request_format="${3:-story}"
     local podcast_minutes="$4"
-    local prompt_text user_prompt history_context canon_context
+    local prompt_text user_prompt history_context canon_context has_topic
+
+    if [ -n "$topic" ]; then
+        has_topic="yes"
+    else
+        has_topic="no"
+    fi
 
     prompt_text=$(build_storygen_system_prompt) || return 1
     history_context=$(build_generation_memory_context) || return 1
@@ -3563,7 +3655,7 @@ generate_story_text() {
             "${HALO_STORYGEN_USER_PODCAST_PROMPT_FILE:-$STORYGEN_USER_PODCAST_PROMPT_FILE_DEFAULT}" \
             "topic=${topic}" \
             "topic_or_none=${topic:-none}" \
-            "has_topic=$( [ -n \"$topic\" ] && printf 'yes' || printf 'no' )" \
+            "has_topic=${has_topic}" \
             "podcast_minutes=${podcast_minutes:-0}" \
             "max_words=${max_words:-0}" \
             "target_minutes=${podcast_minutes:-0}" \
@@ -3573,7 +3665,7 @@ generate_story_text() {
             "${HALO_STORYGEN_USER_STORY_PROMPT_FILE:-$STORYGEN_USER_STORY_PROMPT_FILE_DEFAULT}" \
             "topic=${topic}" \
             "topic_or_none=${topic:-none}" \
-            "has_topic=$( [ -n \"$topic\" ] && printf 'yes' || printf 'no' )" \
+            "has_topic=${has_topic}" \
             "max_words=${max_words:-0}" \
             "target_words=${max_words:-0}") || return 1
     fi
@@ -3619,9 +3711,17 @@ PY
 store_story_file() {
     local topic="$1"
     local story_tmp="$2"
+    local request_format="${3:-story}"
     local filename target output_dir
 
-    output_dir="${HALO_GENERATED_STORY_DIR:-$GENERATED_STORY_DIR_DEFAULT}"
+    case "$request_format" in
+        podcast)
+            output_dir="${HALO_GENERATED_PODCAST_DIR:-$GENERATED_PODCAST_DIR_DEFAULT}"
+            ;;
+        story|*)
+            output_dir="${HALO_GENERATED_STORY_DIR:-$GENERATED_STORY_DIR_DEFAULT}"
+            ;;
+    esac
     mkdir -p "$output_dir"
     filename=$(build_story_filename "$topic" "$story_tmp")
     target="$output_dir/$filename"
@@ -3710,7 +3810,7 @@ PY
         return 1
     fi
 
-    story_path=$(store_story_file "$topic" "$story_tmp") || {
+    story_path=$(store_story_file "$topic" "$story_tmp" "$request_format") || {
         rm -f "$story_tmp"
         printf '%s\n' "store_failed" > "$request_dir/status.txt"
         mark_request_failed "$request_dir"
@@ -4130,6 +4230,9 @@ if [ "$READ_MODE" = true ]; then
     if ! python3 -c 'import sys; raise SystemExit(0 if sys.argv[1].strip() else 1)' "$sentence"; then
         echo "Error: Story file is empty: $READ_FILE"
         exit 1
+    fi
+    if [ -z "${HALO_TTS_CACHE_CATEGORY:-}" ]; then
+        CACHE_CATEGORY=$(storygen_format_for_file "$READ_FILE")
     fi
     if story_requires_chunking "$READ_FILE"; then
         render_story_in_chunks "$READ_FILE"

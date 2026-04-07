@@ -14,7 +14,15 @@ Run from the Falcon checkout when you are ready to install the live script targe
 ./scripts/deploy-falcon-runtime.sh --runtime hal
 ```
 
-The script installs the checked-out runtime to the matching live path and verifies the result with `command -v`, `sha256sum`, and `ls -l`.
+The `halo` host deploy now installs a self-contained container app tree under `/opt/halo`, builds the `halo-runtime` image from that tree, starts it with Docker Compose, and updates `/usr/local/bin/halo` to a thin wrapper that executes commands inside the running container.
+
+The installed `halo` app tree includes the build context and runtime assets needed by the container: the runtime script, Python helper modules, prompt templates, canon reference files, sensory/aware support packages, and the container entrypoint/wrapper scripts. The live runtime does not execute from the repo checkout.
+
+The Compose service runs with host networking and host PID visibility so the existing local endpoint assumptions remain valid on Falcon, including `127.0.0.1` playback queue and XTTS fallback routes.
+
+The `hal` deploy remains a lightweight self-contained script install under `/opt/hal` with `/usr/local/bin/hal` symlinked into place.
+
+Verification for `halo` reports the command resolution path, compares the repo script hash to both the installed build-context copy and the script inside the running container, shows the compose service state, and prints both the app directory and the PATH symlink.
 
 ## Falcon K3s Runtime
 
