@@ -1,5 +1,5 @@
 {
-	"folders": [
+  "folders": [
     {
       "path": ".",
     },
@@ -18,30 +18,33 @@
     {
       "path": "../hal-voice-recognition",
     },
+    {
+      "path": "../mesh",
+    },
   ],
-	"settings": {
-		"workbench.colorCustomizations": {
-			"activityBar.background": "#eb8d70",
-			"titleBar.activeBackground": "#e56943",
-			"titleBar.activeForeground": "#15202b",
-			"titleBar.inactiveBackground": "#e5694399",
-			"titleBar.inactiveForeground": "#15202b99",
-			"statusBar.background": "#e56943",
-			"statusBar.foreground": "#15202b",
-			"statusBar.noFolderBackground": "#0F3328",
-			"statusBar.noFolderForeground": "#F5FCFA",
-			"activityBar.activeBackground": "#eb8d70",
-			"activityBar.foreground": "#15202b",
-			"activityBar.inactiveForeground": "#15202b99",
-			"activityBarBadge.background": "#c7f7d2",
-			"activityBarBadge.foreground": "#15202b",
-			"commandCenter.border": "#15202b99",
-			"sash.hoverBorder": "#eb8d70",
-			"statusBarItem.hoverBackground": "#d7491e",
-			"statusBarItem.remoteBackground": "#e56943",
-			"statusBarItem.remoteForeground": "#15202b"
-		},
-		"peacock.color": "#e56943",
-		"python-envs.defaultEnvManager": "ms-python.python:system"
-	}
+  "settings": {
+    "workbench.colorCustomizations": {
+      "activityBar.background": "#eb8d70",
+      "titleBar.activeBackground": "#e56943",
+      "titleBar.activeForeground": "#15202b",
+      "titleBar.inactiveBackground": "#e5694399",
+      "titleBar.inactiveForeground": "#15202b99",
+      "statusBar.background": "#e56943",
+      "statusBar.foreground": "#15202b",
+      "statusBar.noFolderBackground": "#0F3328",
+      "statusBar.noFolderForeground": "#F5FCFA",
+      "activityBar.activeBackground": "#eb8d70",
+      "activityBar.foreground": "#15202b",
+      "activityBar.inactiveForeground": "#15202b99",
+      "activityBarBadge.background": "#c7f7d2",
+      "activityBarBadge.foreground": "#15202b",
+      "commandCenter.border": "#15202b99",
+      "sash.hoverBorder": "#eb8d70",
+      "statusBarItem.hoverBackground": "#d7491e",
+      "statusBarItem.remoteBackground": "#e56943",
+      "statusBarItem.remoteForeground": "#15202b",
+    },
+    "peacock.color": "#e56943",
+    "python-envs.defaultEnvManager": "ms-python.python:system",
+  },
 }
