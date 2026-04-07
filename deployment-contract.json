@@ -83,7 +83,7 @@
         "targetRepo": "tts-player-queue-service",
         "kind": "http",
         "pathOrEndpoint": "http://127.0.0.1:18080/api/tts/play",
-        "sourcePaths": ["halo"]
+        "sourcePaths": ["docker-compose.halo-runtime.yml", "halo"]
       },
       {
         "name": "hal-sysmon-latency-state",

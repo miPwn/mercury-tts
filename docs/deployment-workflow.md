@@ -20,6 +20,8 @@ The installed `halo` app tree includes the build context and runtime assets need
 
 The Compose service runs with host networking and host PID visibility so the existing local endpoint assumptions remain valid on Falcon, including `127.0.0.1` playback queue and XTTS fallback routes.
 
+The container runtime must also receive any Falcon-specific playback queue overrides through `docker-compose.halo-runtime.yml`; otherwise containerized `halo` can fall back to the script defaults even when the host shell has custom `HALO_PLAYBACK_QUEUE_*` settings.
+
 The `hal` deploy remains a lightweight self-contained script install under `/opt/hal` with `/usr/local/bin/hal` symlinked into place.
 
 Verification for `halo` reports the command resolution path, compares the repo script hash to both the installed build-context copy and the script inside the running container, shows the compose service state, and prints both the app directory and the PATH symlink.

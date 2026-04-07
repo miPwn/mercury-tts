@@ -1281,7 +1281,7 @@ request_tts_audio() {
         fi
 
         http_code=$(curl -sS --connect-timeout "$HALO_TTS_CONNECT_TIMEOUT" --max-time "$TTS_MAX_TIME" -o "$tmpfile" -w "%{http_code}" \
-            "${endpoint}?text=${encoded_text}&speaker_id=${SPEAKER_ID}&language_id=${LANGUAGE}") || {
+            "${endpoint}?text=${encoded_text}&speaker_id=${SPEAKER_ID}&language_id=${LANGUAGE}" 2>/dev/null) || {
             last_error="Error: HALO XTTS ${TTS_LABEL} request failed or timed out via ${endpoint}"
             rm -f "$tmpfile"
             continue
