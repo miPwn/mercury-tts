@@ -1,5 +1,5 @@
 param(
-    [string]$ProjectRoot = "f:/DEVELOPMENT/FALCON_LOCAL/mercury-tts",
+    [string]$ProjectRoot,
     [int]$PostgresPort = 15433,
     [int]$QdrantPort = 16333,
     [switch]$SkipComposeUp,
@@ -12,6 +12,25 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+$scriptRepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
+
+if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
+    $workspaceRoot = $env:HALO_WORKSPACE_ROOT
+    if (-not [string]::IsNullOrWhiteSpace($workspaceRoot)) {
+        $workspaceRepoRoot = Join-Path $workspaceRoot 'mercury-tts'
+        if (Test-Path -LiteralPath $workspaceRepoRoot) {
+            $ProjectRoot = (Resolve-Path -LiteralPath $workspaceRepoRoot).Path
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
+        $ProjectRoot = $scriptRepoRoot
+    }
+}
+else {
+    $ProjectRoot = (Resolve-Path -LiteralPath $ProjectRoot).Path
+}
 
 Set-Location $ProjectRoot
 

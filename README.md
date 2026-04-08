@@ -397,8 +397,10 @@ This is intentionally optional and does not block speech if the display path is 
 If you want to call `halo` from WSL, install the WSL-side shim from this repo:
 
 ```bash
-bash /mnt/f/DEVELOPMENT/FALCON_LOCAL/mercury-tts/tools/install-halo-wsl-client.sh
+bash /mnt/f/DEVELOPMENT/FALCON_LOCAL/halo-system/mercury-tts/tools/install-halo-wsl-client.sh
 ```
+
+Treat that path as an example for the standard workspace layout. If your checkout lives elsewhere, run the same installer script from the matching WSL path for your repo location.
 
 That installer places the client at `~/bin/halo` and adds `~/bin` to the WSL shell `PATH` if needed.
 
@@ -646,8 +648,10 @@ If you want the forwards to come up before user logon and also want firewall rul
 If you want to call `halo` from WSL, install the WSL-side shim from this repo:
 
 ```bash
-bash /mnt/f/DEVELOPMENT/FALCON_LOCAL/mercury-tts/tools/install-halo-wsl-client.sh
+bash /mnt/f/DEVELOPMENT/FALCON_LOCAL/halo-system/mercury-tts/tools/install-halo-wsl-client.sh
 ```
+
+Treat that path as an example for the standard workspace layout. If your checkout lives elsewhere, run the same installer script from the matching WSL path for your repo location.
 
 That installer places the client at `~/bin/halo` and adds `~/bin` to the WSL shell `PATH` if needed.
 
