@@ -97,6 +97,29 @@ run_compose() {
     exit 1
 }
 
+ensure_halo_host_runtime_dirs() {
+    local host_root="${HALO_ROOT:-/mnt/dkstorage/hal-system-monitor}"
+    local runtime_uid="${HALO_RUNTIME_UID:-1000}"
+    local runtime_gid="${HALO_RUNTIME_GID:-1000}"
+    local directory mismatch
+
+    for directory in \
+        "$host_root/cache/halo-xtts/podcast" \
+        "$host_root/cache/halo-xtts/podcast/bundles" \
+        "$host_root/cache/halo-xtts/story" \
+        "$host_root/cache/halo-xtts/story/bundles" \
+        "$host_root/state/halo/storygen-queue" \
+        "$host_root/story" \
+        "$host_root/podcast"
+    do
+        sudo -n mkdir -p "$directory"
+        mismatch=$(sudo -n find "$directory" \( ! -user "$runtime_uid" -o ! -group "$runtime_gid" \) -print -quit 2>/dev/null || true)
+        if [ -n "$mismatch" ]; then
+            sudo -n chown -R "$runtime_uid:$runtime_gid" "$directory"
+        fi
+    done
+}
+
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --runtime)
@@ -162,6 +185,7 @@ sudo -n cp -a "$STAGE_DIR/." "$INSTALL_ROOT/"
 
 if [ "$RUNTIME_NAME" = "halo" ]; then
     sudo -n ln -sfn "$INSTALL_ROOT/scripts/halo-container-wrapper.sh" "$INSTALL_PATH"
+    ensure_halo_host_runtime_dirs
 
     printf '\n==> Building and starting halo-runtime container\n'
     run_compose "$INSTALL_ROOT/docker-compose.halo-runtime.yml" up -d --build halo-runtime

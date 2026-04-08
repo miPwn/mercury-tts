@@ -1043,6 +1043,58 @@ bundle_dir_for_format() {
     esac
 }
 
+bundle_stage_parent_dir_for_format() {
+    local content_format="$1"
+
+    case "$content_format" in
+        podcast)
+            printf '%s\n' "$STATE_DIR/podcast-bundle-stage"
+            ;;
+        story|*)
+            printf '%s\n' "$STATE_DIR/story-bundle-stage"
+            ;;
+    esac
+}
+
+new_bundle_stage_dir() {
+    local content_format="$1"
+    local story_hash="$2"
+    local stage_parent
+
+    stage_parent=$(bundle_stage_parent_dir_for_format "$content_format") || return 1
+    mkdir -p "$stage_parent"
+    mktemp -d "${stage_parent}/${story_hash}.XXXXXX"
+}
+
+publish_bundle_dir() {
+    local staged_bundle_dir="$1"
+    local final_bundle_dir="$2"
+    local final_parent backup_dir
+
+    final_parent=$(dirname "$final_bundle_dir")
+    mkdir -p "$final_parent"
+
+    if [ -e "$final_bundle_dir" ]; then
+        backup_dir="${final_bundle_dir}.old.$$"
+        rm -rf "$backup_dir"
+        mv "$final_bundle_dir" "$backup_dir"
+    else
+        backup_dir=""
+    fi
+
+    if mv "$staged_bundle_dir" "$final_bundle_dir"; then
+        if [ -n "$backup_dir" ]; then
+            rm -rf "$backup_dir"
+        fi
+        return 0
+    fi
+
+    if [ -n "$backup_dir" ] && [ ! -e "$final_bundle_dir" ]; then
+        mv "$backup_dir" "$final_bundle_dir" 2>/dev/null || true
+    fi
+    return 1
+}
+
 storygen_format_for_file() {
     local story_file="$1"
     local generated_podcast_dir
@@ -3445,7 +3497,7 @@ PY
 
 render_story_in_chunks() {
     local story_file="$1"
-    local story_hash bundle_dir chunk_dir manifest_path manifest_tmp chunk_file chunk_text cache_path chunk_count chunk_render_started_ms chunk_route_file observed_route manifest_text content_format cache_category content_label
+    local story_hash bundle_dir staged_bundle_dir chunk_dir manifest_path manifest_tmp chunk_file chunk_text cache_path published_cache_path chunk_count chunk_render_started_ms chunk_route_file observed_route manifest_text content_format cache_category content_label publish_ok
 
     story_hash=$(python3 - "$story_file" <<'PY'
 import hashlib
@@ -3470,10 +3522,7 @@ PY
             ;;
     esac
 
-    chunk_dir=$(mktemp -d "${STATE_DIR}/story-read.XXXXXX") || return 1
-    mkdir -p "$bundle_dir"
     manifest_path="${bundle_dir}/playlist.txt"
-    manifest_tmp="${manifest_path}.tmp"
 
     if story_playlist_is_complete "$manifest_path"; then
         schedule_story_bundle_assembly "$story_file" "$manifest_path" || true
@@ -3493,12 +3542,22 @@ PY
         return 0
     fi
 
+    chunk_dir=$(mktemp -d "${STATE_DIR}/story-read.XXXXXX") || return 1
+    staged_bundle_dir=$(new_bundle_stage_dir "$content_format" "$story_hash") || {
+        rm -rf "$chunk_dir"
+        return 1
+    }
+    manifest_path="${staged_bundle_dir}/playlist.txt"
+    manifest_tmp="${manifest_path}.tmp"
+
     if ! chunk_count=$(split_story_into_chunks "$story_file" "$chunk_dir"); then
+        rm -rf "$staged_bundle_dir"
         rm -rf "$chunk_dir"
         return 1
     fi
 
     if [ "$chunk_count" -le 0 ]; then
+        rm -rf "$staged_bundle_dir"
         rm -rf "$chunk_dir"
         return 1
     fi
@@ -3521,12 +3580,14 @@ PY
         chunk_render_started_ms=$(now_ms)
         chunk_route_file=$(mktemp "${STATE_DIR}/story-route.XXXXXX") || {
             rm -f "$manifest_tmp"
+            rm -rf "$staged_bundle_dir"
             rm -rf "$chunk_dir"
             return 1
         }
-        cache_path=$(HALO_INTERNAL_READ_CHILD=1 HALO_INTERNAL_LATENCY_CHILD=1 HALO_INTERNAL_ROUTE_FILE="$chunk_route_file" HALO_TTS_REQUEST_CLASS=story HALO_TTS_CACHE_CATEGORY="$cache_category" HALO_TTS_CACHE_BUNDLE_DIR="$bundle_dir" bash "$HALO_SELF" --render-only "$chunk_text") || {
+        cache_path=$(HALO_INTERNAL_READ_CHILD=1 HALO_INTERNAL_LATENCY_CHILD=1 HALO_INTERNAL_ROUTE_FILE="$chunk_route_file" HALO_TTS_REQUEST_CLASS=story HALO_TTS_CACHE_CATEGORY="$cache_category" HALO_TTS_CACHE_BUNDLE_DIR="$staged_bundle_dir" bash "$HALO_SELF" --render-only "$chunk_text") || {
             rm -f "$chunk_route_file"
             rm -f "$manifest_tmp"
+            rm -rf "$staged_bundle_dir"
             rm -rf "$chunk_dir"
             return 1
         }
@@ -3535,11 +3596,18 @@ PY
         LATENCY_RENDER_ROUTE=$(merge_render_route_label "$LATENCY_RENDER_ROUTE" "$observed_route")
         LATENCY_RENDER_REQUEST_MS="$(( ${LATENCY_RENDER_REQUEST_MS:-0} + $(safe_duration_ms "$chunk_render_started_ms" "$(now_ms)") ))"
         manifest_text=$(printf '%s' "$chunk_text" | tr '\t\r\n' '   ')
-        printf '%s\t%s\n' "$cache_path" "$manifest_text" >> "$manifest_tmp"
+        published_cache_path="$cache_path"
+        case "$cache_path" in
+            "$staged_bundle_dir"/*)
+                published_cache_path="${bundle_dir}${cache_path#"$staged_bundle_dir"}"
+                ;;
+        esac
+        printf '%s\t%s\n' "$published_cache_path" "$manifest_text" >> "$manifest_tmp"
 
         if [ "$RENDER_ONLY" = false ]; then
             play_audio_file "$cache_path" "$chunk_text" || {
                 rm -f "$manifest_tmp"
+                rm -rf "$staged_bundle_dir"
                 rm -rf "$chunk_dir"
                 return 1
             }
@@ -3549,6 +3617,15 @@ PY
     rm -rf "$chunk_dir"
 
     mv "$manifest_tmp" "$manifest_path"
+    publish_ok=true
+    if ! publish_bundle_dir "$staged_bundle_dir" "$bundle_dir"; then
+        publish_ok=false
+    fi
+    if [ "$publish_ok" != true ]; then
+        rm -rf "$staged_bundle_dir"
+        return 1
+    fi
+    manifest_path="${bundle_dir}/playlist.txt"
     schedule_story_bundle_assembly "$story_file" "$manifest_path" || true
 
     if [ "$RENDER_ONLY" = true ]; then
