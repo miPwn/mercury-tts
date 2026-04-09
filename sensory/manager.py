@@ -15,7 +15,7 @@ class SensorManager:
     def __init__(self, halo_root: Path) -> None:
         self.halo_root = halo_root
         self.state_dir = halo_root / "state" / "halo" / "sensory"
-        self.store = KnowledgeStore(self.state_dir / "knowledge.sqlite3")
+        self.store = KnowledgeStore()
         self.log = ObservationLog(self.state_dir / "observation-log.jsonl")
         self.pipeline = PerceptionPipeline()
         self.sensors = {

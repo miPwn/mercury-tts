@@ -39,6 +39,9 @@ jobs:
         fi
         python3 scripts/validate_deployment_contract.py --check-changed --base-ref "$BASE_REF"
 
+    - name: Check HAL state docs/runtime alignment
+      run: python3 scripts/check_hal_state_docs_sync.py
+
     - name: Test deployment tooling
       run: python3 -m unittest tests.test_deployment_tools
 

@@ -2,9 +2,9 @@
 
 ## Purpose
 
-HAL's current aware-mode state is spread across small JSON files, embedded Python inside the `halo` Bash runtime, and a separate SQLite-backed sensory store. That is enough for continuity over a short window, but it is not strong enough for durable identity, long-form story generation, imported learning material, or a recurring podcast-style output such as The Jupiter Transmissions.
+HAL aware-mode runtime state is now Postgres-backed. Local JSON files remain only for lightweight runtime toggles and trigger configuration. Durable identity, episodic memory, sensory records, commentary history, and generated artifacts are persisted in Postgres.
 
-This document defines the replacement state architecture.
+This document defines the implemented architecture and the remaining expansion areas.
 
 ## Design Goals
 
@@ -13,7 +13,7 @@ This document defines the replacement state architecture.
 - support external learning material under `Z:/hal-system-monitor/learning_matrial`
 - support semantic retrieval through Qdrant without making vector storage the system of record
 - keep structured state queryable for ranking, audits, migration, and deterministic prompt building
-- allow the current `halo` CLI to migrate incrementally instead of requiring a full rewrite
+- keep the `halo` CLI thin by routing state operations through Python entrypoints
 
 ## Storage Choice
 
@@ -26,7 +26,7 @@ Why:
 - the current data is relational in shape: outputs, triggers, observations, entities, facts, source documents, and generated episodes
 - durable identity and memory need transactions, constraints, and explicit schemas
 - prompt-building and retrieval ranking benefit from SQL joins and predictable filtering
-- migration from the current SQLite stores is straightforward
+- migration from the legacy SQLite stores is complete
 
 ### Qdrant for semantic retrieval
 
@@ -170,13 +170,13 @@ Each imported document should track:
 
 - add the Postgres schema
 - define runtime config for Postgres and Qdrant
-- keep the current SQLite-aware implementation running
+- keep legacy runtime paths available during initial cutover
 
 ### Phase 2
 
 - add a Python state service module that owns reads and writes
 - migrate aware-mode reads from embedded Python in `halo` to that module
-- dual-write sensory events into SQLite and Postgres if needed during cutover
+- complete cutover and remove runtime dual-write behavior
 
 ### Phase 3
 
@@ -186,19 +186,20 @@ Each imported document should track:
 
 ### Phase 4
 
-- retire `aware-memory.sqlite3`, `aware-summary.txt`, and most of `aware-mode.json`
+- retire `aware-memory.sqlite3` runtime usage and embedded SQLite runtime code paths
 - retain only lightweight runtime toggles as local config if still needed
 
-## Immediate Implementation Boundaries
+## Current Implementation Status
 
-This first pass does not yet replace the runtime logic. It defines the target architecture and schema so subsequent work can implement a proper state module without guessing.
+As of 2026-04-09:
 
-The first implementation target should be a Python package under this repo that exposes:
+- `halo` runtime state reads/writes are Postgres-only
+- sensory persistence and commentary-cycle history are Postgres-backed
+- legacy migration and dual-write runtime paths are removed
+- runtime docs/config examples align to Postgres-only operation
 
-- `StateRepository`
-- `IdentityRepository`
-- `MemoryRepository`
-- `DocumentRepository`
-- `RetrievalService`
+## Remaining Implementation Areas
 
-The `halo` Bash runtime should call thin Python entrypoints rather than continuing to embed large Python scripts inline.
+- further reduce inline Python blocks in `halo` by moving additional logic into `halo_state` modules
+- expand retrieval ranking and memory promotion workflows as separate explicit services
+- keep guardrail checks in CI so architecture docs and runtime behavior cannot drift silently

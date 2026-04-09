@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,10 +12,11 @@ from sensory.sensors.network import NetworkSensor
 from sensory.sensors.photoprism import PhotoPrismSensor
 
 
+@unittest.skipUnless(os.getenv("HALO_STATE_POSTGRES_DSN"), "HALO_STATE_POSTGRES_DSN is required for KnowledgeStore tests.")
 class KnowledgeStoreTests(unittest.TestCase):
     def test_commentary_cooldown(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            store = KnowledgeStore(Path(temp_dir) / "knowledge.sqlite3")
+            store = KnowledgeStore()
             now = "2026-04-03T10:00:00+00:00"
             self.assertTrue(store.commentary_allowed("sensory:host", "abc", 1800, now))
             store.record_commentary_emission("sensory:host", "abc", "test", now, {"sensor": "host"})
@@ -23,6 +25,7 @@ class KnowledgeStoreTests(unittest.TestCase):
             self.assertTrue(store.commentary_allowed("sensory:host", "def", 1800, "2026-04-03T10:40:01+00:00"))
 
 
+@unittest.skipUnless(os.getenv("HALO_STATE_POSTGRES_DSN"), "HALO_STATE_POSTGRES_DSN is required for SensorManager tests.")
 class ManagerTests(unittest.TestCase):
     def test_commentary_candidate_and_status(self):
         with tempfile.TemporaryDirectory() as temp_dir:

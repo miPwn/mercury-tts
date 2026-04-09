@@ -341,23 +341,22 @@ The runtime includes two higher-level subsystems.
 State files live under `state/halo/` and include:
 
 - aware mode state
-- aware memory database
 - aware summary text
 - trigger configuration
 - aware output directory
 
-This file-backed and SQLite-backed model is the current implementation. The target replacement architecture for durable identity, episodic memory, imported learning material, and Qdrant-backed retrieval is documented in `docs/architecture/aware-state-system.md`, with the initial Postgres schema in `db/halo_state_postgres.sql` and sample runtime configuration in `config/halo-state.env.example`.
+Runtime state persistence is Postgres-backed. The durable architecture for identity, episodic memory, imported learning material, and Qdrant-backed retrieval is documented in `docs/architecture/aware-state-system.md`, with the schema in `db/halo_state_postgres.sql` and sample runtime configuration in `config/halo-state.env.example`.
 
 State tooling now lives under `halo_state/` and can be called directly with `PYTHONPATH=. python3 -m halo_state.cli ...`.
 
 Useful commands:
 
-- `PYTHONPATH=. python3 -m halo_state.cli migrate-legacy-state --aware-db /path/to/aware-memory.sqlite3 --sensory-db /path/to/knowledge.sqlite3`
-- `PYTHONPATH=. python3 -m halo_state.cli migrate-legacy-state --commentary-db /path/to/commentary-history.sqlite3`
 - `PYTHONPATH=. python3 -m halo_state.cli ingest-learning-material`
 - `PYTHONPATH=. python3 -m halo_state.cli refresh-summary --summary-file /path/to/aware-summary.txt --entry-limit 12 --max-chars 1800`
 
 Python dependencies for the new state layer are listed in `requirements-state.txt`.
+
+Run `python scripts/check_hal_state_docs_sync.py` after any major HAL state/runtime change. CI enforces this check.
 
 For a local self-contained development stack, use `docker-compose.halo-state.yml` and `tools/bootstrap-halo-state.ps1`.
 

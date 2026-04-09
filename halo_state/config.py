@@ -21,7 +21,6 @@ def _int_env(name: str, default: int) -> int:
 
 @dataclass(frozen=True)
 class StateConfig:
-    backend: str = "sqlite"
     postgres_dsn: str = ""
     postgres_schema: str = "halo"
     profile_key: str = "hal-9000"
@@ -35,14 +34,12 @@ class StateConfig:
     retrieval_top_k: int = 8
     memory_top_k: int = 6
     canon_top_k: int = 4
-    dual_write: bool = False
     enable_vector_index: bool = True
     enable_learning_ingest: bool = True
 
     @classmethod
     def from_env(cls) -> "StateConfig":
         return cls(
-            backend=os.getenv("HALO_STATE_BACKEND", "sqlite").strip().lower(),
             postgres_dsn=os.getenv("HALO_STATE_POSTGRES_DSN", "").strip(),
             postgres_schema=os.getenv("HALO_STATE_POSTGRES_SCHEMA", "halo").strip() or "halo",
             profile_key=os.getenv("HALO_STATE_PROFILE_KEY", "hal-9000").strip() or "hal-9000",
@@ -56,7 +53,6 @@ class StateConfig:
             retrieval_top_k=_int_env("HALO_STATE_RETRIEVAL_TOP_K", 8),
             memory_top_k=_int_env("HALO_STATE_MEMORY_TOP_K", 6),
             canon_top_k=_int_env("HALO_STATE_CANON_TOP_K", 4),
-            dual_write=_bool_env("HALO_STATE_ENABLE_DUAL_WRITE", False),
             enable_vector_index=_bool_env("HALO_STATE_ENABLE_VECTOR_INDEX", True),
             enable_learning_ingest=_bool_env("HALO_STATE_ENABLE_LEARNING_INGEST", True),
         )

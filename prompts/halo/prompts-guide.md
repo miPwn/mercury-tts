@@ -61,7 +61,7 @@ The runtime injects additional contextual material beyond the static prompt file
 
 - timestamps and host details
 - topic seeds and target lengths
-- aware-mode recent and relevant summaries from the SQLite memory store
+- aware-mode recent and relevant summaries from the Postgres memory store
 - prior generated story text from the generated story archive
 - prior aware story and commentary artifacts from the aware-output archive
 - prior commentary lines recorded in commentary history
@@ -118,7 +118,7 @@ flowchart TD
     Persona[halo-persona.txt]
     AwareSystem[aware-system.txt]
     AwareKinds[aware-kind-*.txt]
-    AwareStore[(aware sqlite memory)]
+    AwareStore[(aware postgres memory)]
     MemoryGuidance[generation-memory-guidance.txt]
     MemorySection[generation-memory-section.txt]
     CanonSection[canon-context-section.txt]

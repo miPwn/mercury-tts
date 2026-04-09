@@ -76,17 +76,6 @@ def cmd_evaluate_triggers(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_migrate_legacy_state(args: argparse.Namespace) -> int:
-    service = _service()
-    stats = service.migrate_legacy_state(
-        aware_db=Path(args.aware_db) if args.aware_db else None,
-        sensory_db=Path(args.sensory_db) if args.sensory_db else None,
-        commentary_db=Path(args.commentary_db) if args.commentary_db else None,
-    )
-    print(json.dumps(stats, indent=2, sort_keys=True))
-    return 0
-
-
 def cmd_ingest_learning_material(args: argparse.Namespace) -> int:
     config = StateConfig.from_env()
     stats = ingest_learning_material(
@@ -137,12 +126,6 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate_triggers = subparsers.add_parser("evaluate-triggers")
     evaluate_triggers.add_argument("--trigger-file", required=True)
     evaluate_triggers.set_defaults(func=cmd_evaluate_triggers)
-
-    migrate = subparsers.add_parser("migrate-legacy-state")
-    migrate.add_argument("--aware-db")
-    migrate.add_argument("--sensory-db")
-    migrate.add_argument("--commentary-db")
-    migrate.set_defaults(func=cmd_migrate_legacy_state)
 
     ingest = subparsers.add_parser("ingest-learning-material")
     ingest.add_argument("--document-root")

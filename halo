@@ -26,7 +26,6 @@ REVIEW_DIR="${HALO_ROOT}/review"
 STATE_DIR="${HALO_ROOT}/state/halo"
 GENERATED_STORY_DIR_DEFAULT="${STATE_DIR}/generated-stories"
 GENERATED_PODCAST_DIR_DEFAULT="${PODCAST_DIR}"
-COMMENTARY_HISTORY_DB_DEFAULT="${STATE_DIR}/commentary-history.sqlite3"
 HALO_COMMENTARY_SIMILARITY_THRESHOLD="${HALO_COMMENTARY_SIMILARITY_THRESHOLD:-0.74}"
 HALO_COMMENTARY_RECENT_SIMILARITY_WINDOW="${HALO_COMMENTARY_RECENT_SIMILARITY_WINDOW:-24}"
 QUEUE_DIR="${STATE_DIR}/storygen-queue"
@@ -57,7 +56,6 @@ GENERATION_MEMORY_SECTION_PROMPT_FILE_DEFAULT="${PROMPT_DIR_DEFAULT}/generation-
 CANON_CONTEXT_SECTION_PROMPT_FILE_DEFAULT="${PROMPT_DIR_DEFAULT}/canon-context-section.txt"
 STORYGEN_ENV_FILE_DEFAULT="${STATE_DIR}/storygen.env"
 AWARE_MODE_FILE_DEFAULT="${STATE_DIR}/aware-mode.json"
-AWARE_MEMORY_DB_DEFAULT="${STATE_DIR}/aware-memory.sqlite3"
 AWARE_SUMMARY_FILE_DEFAULT="${STATE_DIR}/aware-summary.txt"
 AWARE_TRIGGER_CONFIG_DEFAULT="${STATE_DIR}/aware-triggers.json"
 AWARE_OUTPUT_DIR_DEFAULT="${STATE_DIR}/aware-output"
@@ -94,9 +92,7 @@ HALO_AWARE_SUMMARY_MAX_CHARS="${HALO_AWARE_SUMMARY_MAX_CHARS:-1800}"
 HALO_GENERATION_MEMORY_MAX_CHARS="${HALO_GENERATION_MEMORY_MAX_CHARS:-48000}"
 HALO_GENERATION_MEMORY_MAX_ENTRIES="${HALO_GENERATION_MEMORY_MAX_ENTRIES:-240}"
 HALO_SENSORY_PYTHON="${HALO_SENSORY_PYTHON:-python3}"
-HALO_STATE_BACKEND="${HALO_STATE_BACKEND:-sqlite}"
 HALO_STATE_PYTHON="${HALO_STATE_PYTHON:-python3}"
-HALO_STATE_ENABLE_DUAL_WRITE="${HALO_STATE_ENABLE_DUAL_WRITE:-0}"
 
 RENDER_ONLY=false
 READ_MODE=false
@@ -253,18 +249,19 @@ load_halo_persona() {
 }
 
 build_generation_memory_context() {
-    local generated_dir aware_output_dir commentary_db
+    local generated_dir aware_output_dir postgres_dsn postgres_schema
 
     generated_dir="${HALO_GENERATED_STORY_DIR:-$GENERATED_STORY_DIR_DEFAULT}"
     aware_output_dir="${HALO_AWARE_OUTPUT_DIR:-$AWARE_OUTPUT_DIR_DEFAULT}"
-    commentary_db="${HALO_COMMENTARY_HISTORY_DB:-$COMMENTARY_HISTORY_DB_DEFAULT}"
+    postgres_dsn="${HALO_STATE_POSTGRES_DSN:-}"
+    postgres_schema="${HALO_STATE_POSTGRES_SCHEMA:-halo}"
 
-    python3 - "$generated_dir" "$aware_output_dir" "$commentary_db" "$HALO_GENERATION_MEMORY_MAX_CHARS" "$HALO_GENERATION_MEMORY_MAX_ENTRIES" "${HALO_GENERATION_MEMORY_SECTION_PROMPT_FILE:-$GENERATION_MEMORY_SECTION_PROMPT_FILE_DEFAULT}" <<'PY'
+    python3 - "$generated_dir" "$aware_output_dir" "$postgres_dsn" "$postgres_schema" "$HALO_GENERATION_MEMORY_MAX_CHARS" "$HALO_GENERATION_MEMORY_MAX_ENTRIES" "${HALO_GENERATION_MEMORY_SECTION_PROMPT_FILE:-$GENERATION_MEMORY_SECTION_PROMPT_FILE_DEFAULT}" <<'PY'
 import datetime
 import hashlib
 import json
 import pathlib
-import sqlite3
+import re
 import sys
 
 
@@ -332,26 +329,30 @@ def aware_entries(root: pathlib.Path):
     return entries
 
 
-def commentary_entries(db_path: pathlib.Path):
-    if not db_path.exists():
+def commentary_entries(postgres_dsn: str, schema_name: str):
+    if not postgres_dsn:
         return []
     try:
-        connection = sqlite3.connect(db_path)
-        connection.row_factory = sqlite3.Row
-    except sqlite3.Error:
+        import psycopg
+        from psycopg.rows import dict_row
+    except Exception:
+        return []
+    if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', schema_name):
         return []
     try:
-        rows = connection.execute(
-            '''
-            SELECT played_at, commentary_file, line_text
-            FROM commentary_history
-            ORDER BY played_at ASC, id ASC
-            '''
-        ).fetchall()
-    except sqlite3.Error:
+        with psycopg.connect(postgres_dsn, row_factory=dict_row) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f'''
+                    SELECT played_at::text AS played_at, commentary_file, line_text
+                    FROM {schema_name}.commentary_line_history
+                    ORDER BY played_at ASC
+                    LIMIT 2000
+                    '''
+                )
+                rows = cursor.fetchall()
+    except Exception:
         rows = []
-    finally:
-        connection.close()
 
     entries = []
     for row in rows:
@@ -370,12 +371,13 @@ def commentary_entries(db_path: pathlib.Path):
 
 generated_dir = pathlib.Path(sys.argv[1])
 aware_output_dir = pathlib.Path(sys.argv[2])
-commentary_db = pathlib.Path(sys.argv[3])
-max_chars = max(0, int(sys.argv[4]))
-max_entries = max(0, int(sys.argv[5]))
-section_prompt_file = sys.argv[6]
+postgres_dsn = sys.argv[3].strip()
+postgres_schema = (sys.argv[4] or 'halo').strip()
+max_chars = max(0, int(sys.argv[5]))
+max_entries = max(0, int(sys.argv[6]))
+section_prompt_file = sys.argv[7]
 
-entries = story_entries(generated_dir) + aware_entries(aware_output_dir) + commentary_entries(commentary_db)
+entries = story_entries(generated_dir) + aware_entries(aware_output_dir) + commentary_entries(postgres_dsn, postgres_schema)
 
 seen_hashes = set()
 deduped = []
@@ -1741,18 +1743,6 @@ aware_notice() {
     printf '%s\n' "$*" >&2
 }
 
-state_backend_is_postgres_only() {
-    [ "$HALO_STATE_BACKEND" = "postgres" ]
-}
-
-state_backend_dual_write() {
-    [ "$HALO_STATE_ENABLE_DUAL_WRITE" = "1" ]
-}
-
-state_backend_uses_postgres() {
-    state_backend_is_postgres_only || state_backend_dual_write
-}
-
 resolve_halo_state_python() {
     local candidate
     for candidate in "${HALO_STATE_PYTHON:-}" python3 python.exe py.exe python; do
@@ -1786,7 +1776,7 @@ ensure_aware_mode_file() {
         return 0
     fi
 
-    python3 - "$state_file" "$(resolve_halo_persona_file)" "${HALO_AWARE_MEMORY_DB:-$AWARE_MEMORY_DB_DEFAULT}" "${HALO_AWARE_SUMMARY_FILE:-$AWARE_SUMMARY_FILE_DEFAULT}" "${HALO_AWARE_TRIGGER_CONFIG:-$AWARE_TRIGGER_CONFIG_DEFAULT}" <<'PY'
+    python3 - "$state_file" "$(resolve_halo_persona_file)" "${HALO_AWARE_SUMMARY_FILE:-$AWARE_SUMMARY_FILE_DEFAULT}" "${HALO_AWARE_TRIGGER_CONFIG:-$AWARE_TRIGGER_CONFIG_DEFAULT}" <<'PY'
 import datetime
 import json
 import pathlib
@@ -1797,9 +1787,9 @@ state = {
     'enabled': False,
     'updated_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
     'persona_file': sys.argv[2],
-    'memory_db': sys.argv[3],
-    'summary_file': sys.argv[4],
-    'trigger_config': sys.argv[5],
+    'memory_store': 'postgres',
+    'summary_file': sys.argv[3],
+    'trigger_config': sys.argv[4],
 }
 state_path.write_text(json.dumps(state, indent=2) + '\n', encoding='utf-8')
 PY
@@ -1859,7 +1849,7 @@ set_aware_mode_state() {
     state_file="${HALO_AWARE_MODE_FILE:-$AWARE_MODE_FILE_DEFAULT}"
     ensure_aware_dirs
 
-    python3 - "$state_file" "$enabled_value" "$(resolve_halo_persona_file)" "${HALO_AWARE_MEMORY_DB:-$AWARE_MEMORY_DB_DEFAULT}" "${HALO_AWARE_SUMMARY_FILE:-$AWARE_SUMMARY_FILE_DEFAULT}" "${HALO_AWARE_TRIGGER_CONFIG:-$AWARE_TRIGGER_CONFIG_DEFAULT}" <<'PY'
+    python3 - "$state_file" "$enabled_value" "$(resolve_halo_persona_file)" "${HALO_AWARE_SUMMARY_FILE:-$AWARE_SUMMARY_FILE_DEFAULT}" "${HALO_AWARE_TRIGGER_CONFIG:-$AWARE_TRIGGER_CONFIG_DEFAULT}" <<'PY'
 import datetime
 import json
 import pathlib
@@ -1880,9 +1870,9 @@ state.update({
     'enabled': enabled,
     'updated_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
     'persona_file': sys.argv[3],
-    'memory_db': sys.argv[4],
-    'summary_file': sys.argv[5],
-    'trigger_config': sys.argv[6],
+    'memory_store': 'postgres',
+    'summary_file': sys.argv[4],
+    'trigger_config': sys.argv[5],
 })
 
 state_path.write_text(json.dumps(state, indent=2) + '\n', encoding='utf-8')
@@ -1911,57 +1901,19 @@ PY
 show_aware_status() {
     local state_file memory_db trigger_file summary_file output_dir
     state_file="${HALO_AWARE_MODE_FILE:-$AWARE_MODE_FILE_DEFAULT}"
-    memory_db="${HALO_AWARE_MEMORY_DB:-$AWARE_MEMORY_DB_DEFAULT}"
+    memory_db="${HALO_AWARE_MEMORY_DB:-disabled-postgres-only}"
     trigger_file="${HALO_AWARE_TRIGGER_CONFIG:-$AWARE_TRIGGER_CONFIG_DEFAULT}"
     summary_file="${HALO_AWARE_SUMMARY_FILE:-$AWARE_SUMMARY_FILE_DEFAULT}"
     output_dir="${HALO_AWARE_OUTPUT_DIR:-$AWARE_OUTPUT_DIR_DEFAULT}"
     ensure_aware_dirs
 
-    if state_backend_uses_postgres; then
-        halo_state_cli aware-status \
-            --state-file "$state_file" \
-            --memory-db "$memory_db" \
-            --summary-file "$summary_file" \
-            --trigger-file "$trigger_file" \
-            --output-dir "$output_dir"
-        return $?
-    fi
-
-    python3 - "$state_file" "$memory_db" "$summary_file" "$trigger_file" "$output_dir" <<'PY'
-import json
-import pathlib
-import sqlite3
-import sys
-
-state_path = pathlib.Path(sys.argv[1])
-memory_db = pathlib.Path(sys.argv[2])
-summary_file = pathlib.Path(sys.argv[3])
-trigger_file = pathlib.Path(sys.argv[4])
-output_dir = pathlib.Path(sys.argv[5])
-
-state = json.loads(state_path.read_text(encoding='utf-8'))
-total_outputs = 0
-if memory_db.exists():
-    connection = sqlite3.connect(memory_db)
-    try:
-        total_outputs = connection.execute('SELECT COUNT(*) FROM aware_outputs').fetchone()[0]
-    except sqlite3.Error:
-        total_outputs = 0
-    finally:
-        connection.close()
-
-print(f'HAL aware mode: {"ON" if state.get("enabled") else "OFF"}')
-print(f'Persona file: {state.get("persona_file") or "unknown"}')
-print(f'Memory store: {memory_db}')
-print(f'Summary file: {summary_file}')
-print(f'Trigger config: {trigger_file}')
-print(f'Output archive: {output_dir}')
-print(f'Persisted outputs: {total_outputs}')
-if summary_file.exists():
-    print(f'Summary status: present ({summary_file.stat().st_size} bytes)')
-else:
-    print('Summary status: not built yet')
-PY
+    halo_state_cli aware-status \
+        --state-file "$state_file" \
+        --memory-db "$memory_db" \
+        --summary-file "$summary_file" \
+        --trigger-file "$trigger_file" \
+        --output-dir "$output_dir"
+    return $?
 }
 
 generate_openai_text() {
@@ -2097,175 +2049,27 @@ select_aware_memory_context() {
     local kind="$1"
     local topic="$2"
     local trigger_source="$3"
-    local memory_db summary_file
-    memory_db="${HALO_AWARE_MEMORY_DB:-$AWARE_MEMORY_DB_DEFAULT}"
-    summary_file="${HALO_AWARE_SUMMARY_FILE:-$AWARE_SUMMARY_FILE_DEFAULT}"
     ensure_aware_dirs
 
-    if state_backend_uses_postgres; then
-        halo_state_cli select-context \
-            --kind "$kind" \
-            --topic "$topic" \
-            --trigger-source "$trigger_source" \
-            --recent-limit "$HALO_AWARE_RECENT_HISTORY_LIMIT" \
-            --relevant-limit "$HALO_AWARE_RELEVANT_HISTORY_LIMIT"
-        return $?
-    fi
-
-    python3 - "$memory_db" "$summary_file" "$kind" "$topic" "$trigger_source" "$HALO_AWARE_RECENT_HISTORY_LIMIT" "$HALO_AWARE_RELEVANT_HISTORY_LIMIT" <<'PY'
-import json
-import pathlib
-import re
-import sqlite3
-import sys
-
-memory_db = pathlib.Path(sys.argv[1])
-summary_file = pathlib.Path(sys.argv[2])
-kind = sys.argv[3]
-topic = sys.argv[4]
-trigger_source = sys.argv[5]
-recent_limit = int(sys.argv[6])
-relevant_limit = int(sys.argv[7])
-
-payload = {
-    'summary': '',
-    'recent': [],
-    'relevant': [],
-    'query': {
-        'kind': kind,
-        'topic': topic,
-        'trigger_source': trigger_source,
-    },
-}
-
-if summary_file.exists():
-    payload['summary'] = summary_file.read_text(encoding='utf-8').strip()
-
-if not memory_db.exists():
-    print(json.dumps(payload))
-    raise SystemExit(0)
-
-connection = sqlite3.connect(memory_db)
-connection.row_factory = sqlite3.Row
-
-try:
-    rows = connection.execute(
-        '''
-        SELECT created_at, kind, trigger_source, topic, text, summary_snippet, artifact_path
-        FROM aware_outputs
-        ORDER BY created_at DESC
-        LIMIT 48
-        '''
-    ).fetchall()
-except sqlite3.Error:
-    rows = []
-finally:
-    connection.close()
-
-def tokenize(value):
-    return set(re.findall(r'[a-z0-9]+', (value or '').lower()))
-
-query_tokens = tokenize(topic)
-query_tokens.update(tokenize(kind))
-query_tokens.update(tokenize(trigger_source))
-
-entries = []
-for row in rows:
-    item = {
-        'created_at': row['created_at'],
-        'kind': row['kind'],
-        'trigger_source': row['trigger_source'],
-        'topic': row['topic'] or '',
-        'summary_snippet': row['summary_snippet'],
-        'artifact_path': row['artifact_path'] or '',
-        'text_excerpt': (row['text'] or '').strip()[:700],
-    }
-    entries.append(item)
-
-payload['recent'] = entries[:recent_limit]
-recent_keys = {(entry['created_at'], entry['summary_snippet']) for entry in payload['recent']}
-
-scored = []
-for index, entry in enumerate(entries[recent_limit:], start=recent_limit):
-    text_tokens = tokenize(entry['topic']) | tokenize(entry['summary_snippet']) | tokenize(entry['text_excerpt'])
-    overlap = len(query_tokens & text_tokens)
-    recency_bonus = max(0, 12 - index)
-    score = overlap * 10 + recency_bonus
-    scored.append((score, index, entry))
-
-scored.sort(key=lambda item: (-item[0], item[1]))
-payload['relevant'] = [
-    entry for score, _, entry in scored
-    if score > 0 and (entry['created_at'], entry['summary_snippet']) not in recent_keys
-][:relevant_limit]
-
-print(json.dumps(payload))
-PY
+    halo_state_cli select-context \
+        --kind "$kind" \
+        --topic "$topic" \
+        --trigger-source "$trigger_source" \
+        --recent-limit "$HALO_AWARE_RECENT_HISTORY_LIMIT" \
+        --relevant-limit "$HALO_AWARE_RELEVANT_HISTORY_LIMIT"
+    return $?
 }
 
 refresh_aware_summary() {
-    local memory_db summary_file
-    memory_db="${HALO_AWARE_MEMORY_DB:-$AWARE_MEMORY_DB_DEFAULT}"
+    local summary_file
     summary_file="${HALO_AWARE_SUMMARY_FILE:-$AWARE_SUMMARY_FILE_DEFAULT}"
     ensure_aware_dirs
 
-    if state_backend_uses_postgres; then
-        halo_state_cli refresh-summary \
-            --summary-file "$summary_file" \
-            --entry-limit "$HALO_AWARE_SUMMARY_ENTRY_LIMIT" \
-            --max-chars "$HALO_AWARE_SUMMARY_MAX_CHARS"
-        return $?
-    fi
-
-    python3 - "$memory_db" "$summary_file" "$HALO_AWARE_SUMMARY_ENTRY_LIMIT" "$HALO_AWARE_SUMMARY_MAX_CHARS" <<'PY'
-import pathlib
-import sqlite3
-import sys
-
-memory_db = pathlib.Path(sys.argv[1])
-summary_file = pathlib.Path(sys.argv[2])
-entry_limit = int(sys.argv[3])
-max_chars = int(sys.argv[4])
-
-if not memory_db.exists():
-    summary_file.write_text('No HAL aware outputs have been recorded yet.\n', encoding='utf-8')
-    raise SystemExit(0)
-
-connection = sqlite3.connect(memory_db)
-connection.row_factory = sqlite3.Row
-
-try:
-    rows = connection.execute(
-        '''
-        SELECT created_at, kind, trigger_source, topic, summary_snippet
-        FROM aware_outputs
-        ORDER BY created_at DESC
-        LIMIT ?
-        ''',
-        (entry_limit,),
-    ).fetchall()
-except sqlite3.Error:
-    rows = []
-finally:
-    connection.close()
-
-lines = [
-    'HAL aware continuity digest',
-    'Use this as compressed memory, not as an exhaustive transcript.',
-    '',
-]
-
-for row in rows:
-    topic_suffix = f' | topic: {row["topic"]}' if row['topic'] else ''
-    lines.append(f'- {row["created_at"]} | {row["kind"]} | trigger: {row["trigger_source"]}{topic_suffix}')
-    lines.append(f'  {row["summary_snippet"]}')
-
-text = '\n'.join(lines).strip() + '\n'
-if len(text) > max_chars:
-    text = text[:max_chars].rstrip() + '\n'
-
-summary_file.write_text(text, encoding='utf-8')
-PY
+    halo_state_cli refresh-summary \
+        --summary-file "$summary_file" \
+        --entry-limit "$HALO_AWARE_SUMMARY_ENTRY_LIMIT" \
+        --max-chars "$HALO_AWARE_SUMMARY_MAX_CHARS"
+    return $?
 }
 
 build_aware_runtime_context() {
@@ -2463,201 +2267,27 @@ record_aware_output() {
     local trigger_id="$4"
     local text="$5"
     local artifact_path="$6"
-    local memory_db state_text_b64 status
-    memory_db="${HALO_AWARE_MEMORY_DB:-$AWARE_MEMORY_DB_DEFAULT}"
+    local state_text_b64
     ensure_aware_dirs
 
-    if state_backend_is_postgres_only; then
-        state_text_b64=$(printf '%s' "$text" | python3 -c 'import base64, sys; print(base64.b64encode(sys.stdin.buffer.read()).decode("ascii"), end="")') || return 1
-        halo_state_cli record-aware-output \
-            --kind "$kind" \
-            --topic "$topic" \
-            --trigger-source "$trigger_source" \
-            --trigger-id "$trigger_id" \
-            --artifact-path "$artifact_path" \
-            --text-base64 "$state_text_b64"
-        status=$?
-        return $status
-    fi
-
-    HALO_AWARE_OUTPUT_TEXT="$text" python3 - "$memory_db" "$kind" "$topic" "$trigger_source" "$trigger_id" "$artifact_path" <<'PY'
-import datetime
-import hashlib
-import json
-import os
-import pathlib
-import sqlite3
-import sys
-
-memory_db = pathlib.Path(sys.argv[1])
-kind = sys.argv[2]
-topic = sys.argv[3]
-trigger_source = sys.argv[4]
-trigger_id = sys.argv[5]
-artifact_path = sys.argv[6]
-text = os.environ['HALO_AWARE_OUTPUT_TEXT'].strip()
-created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
-summary_snippet = ' '.join(text.split())[:260]
-metadata = {
-    'trigger_id': trigger_id,
-    'artifact_path': artifact_path,
-}
-
-memory_db.parent.mkdir(parents=True, exist_ok=True)
-connection = sqlite3.connect(memory_db)
-connection.execute('PRAGMA journal_mode = WAL')
-connection.execute('PRAGMA busy_timeout = 5000')
-connection.execute(
-    '''
-    CREATE TABLE IF NOT EXISTS aware_outputs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        created_at TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        trigger_source TEXT NOT NULL,
-        trigger_id TEXT NOT NULL,
-        topic TEXT,
-        text TEXT NOT NULL,
-        summary_snippet TEXT NOT NULL,
-        content_hash TEXT NOT NULL,
-        artifact_path TEXT,
-        metadata_json TEXT NOT NULL
-    )
-    '''
-)
-connection.execute('CREATE INDEX IF NOT EXISTS idx_aware_outputs_created_at ON aware_outputs(created_at DESC)')
-connection.execute('CREATE INDEX IF NOT EXISTS idx_aware_outputs_trigger_id ON aware_outputs(trigger_id, created_at DESC)')
-connection.execute('CREATE INDEX IF NOT EXISTS idx_aware_outputs_content_hash ON aware_outputs(content_hash)')
-connection.execute(
-    '''
-    INSERT INTO aware_outputs (
-        created_at, kind, trigger_source, trigger_id, topic, text,
-        summary_snippet, content_hash, artifact_path, metadata_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''',
-    (
-        created_at,
-        kind,
-        trigger_source,
-        trigger_id,
-        topic,
-        text,
-        summary_snippet,
-        hashlib.sha256(text.encode('utf-8')).hexdigest(),
-        artifact_path,
-        json.dumps(metadata, sort_keys=True),
-    ),
-)
-connection.commit()
-connection.close()
-PY
-
-    if state_backend_dual_write; then
-        state_text_b64=$(printf '%s' "$text" | python3 -c 'import base64, sys; print(base64.b64encode(sys.stdin.buffer.read()).decode("ascii"), end="")') || return 1
-        halo_state_cli record-aware-output \
-            --kind "$kind" \
-            --topic "$topic" \
-            --trigger-source "$trigger_source" \
-            --trigger-id "$trigger_id" \
-            --artifact-path "$artifact_path" \
-            --text-base64 "$state_text_b64"
-        status=$?
-        [ $status -eq 0 ] || return $status
-    fi
+    state_text_b64=$(printf '%s' "$text" | python3 -c 'import base64, sys; print(base64.b64encode(sys.stdin.buffer.read()).decode("ascii"), end="")') || return 1
+    halo_state_cli record-aware-output \
+        --kind "$kind" \
+        --topic "$topic" \
+        --trigger-source "$trigger_source" \
+        --trigger-id "$trigger_id" \
+        --artifact-path "$artifact_path" \
+        --text-base64 "$state_text_b64"
+    return $?
 }
 
 evaluate_aware_triggers() {
-    local trigger_file memory_db
+    local trigger_file
     trigger_file="${HALO_AWARE_TRIGGER_CONFIG:-$AWARE_TRIGGER_CONFIG_DEFAULT}"
-    memory_db="${HALO_AWARE_MEMORY_DB:-$AWARE_MEMORY_DB_DEFAULT}"
     ensure_aware_dirs
 
-    if state_backend_uses_postgres; then
-        halo_state_cli evaluate-triggers --trigger-file "$trigger_file"
-        return $?
-    fi
-
-    python3 - "$trigger_file" "$memory_db" <<'PY'
-import datetime
-import json
-import pathlib
-import random
-import sqlite3
-import sys
-
-trigger_file = pathlib.Path(sys.argv[1])
-memory_db = pathlib.Path(sys.argv[2])
-
-if not trigger_file.exists():
-    raise SystemExit(0)
-
-payload = json.loads(trigger_file.read_text(encoding='utf-8'))
-triggers = payload.get('triggers', [])
-connection = None
-if memory_db.exists():
-    connection = sqlite3.connect(memory_db)
-    connection.row_factory = sqlite3.Row
-
-def last_trigger_time(trigger_id: str):
-    if connection is None:
-        return None
-    try:
-        row = connection.execute(
-            'SELECT created_at FROM aware_outputs WHERE trigger_id = ? ORDER BY created_at DESC LIMIT 1',
-            (trigger_id,),
-        ).fetchone()
-    except sqlite3.Error:
-        return None
-    if not row:
-        return None
-    try:
-        return datetime.datetime.fromisoformat(row['created_at'].replace('Z', '+00:00'))
-    except Exception:
-        return None
-
-now = datetime.datetime.now(datetime.timezone.utc)
-selected = None
-for trigger in triggers:
-    if not trigger.get('enabled'):
-        continue
-
-    trigger_type = trigger.get('type')
-    trigger_id = trigger.get('id') or 'unnamed-trigger'
-    kind = trigger.get('kind') or 'observation'
-    topic = trigger.get('topic') or ''
-
-    if trigger_type == 'interval':
-        interval_seconds = int(trigger.get('interval_seconds', 0) or 0)
-        if interval_seconds <= 0:
-            continue
-        last_time = last_trigger_time(trigger_id)
-        if last_time is None or (now - last_time).total_seconds() >= interval_seconds:
-            selected = {
-                'kind': kind,
-                'topic': topic,
-                'trigger_source': 'interval',
-                'trigger_id': trigger_id,
-            }
-            break
-
-    if trigger_type == 'random_chance':
-        chance = float(trigger.get('chance', 0) or 0)
-        if chance <= 0:
-            continue
-        if random.random() <= chance:
-            selected = {
-                'kind': kind,
-                'topic': topic,
-                'trigger_source': 'random_chance',
-                'trigger_id': trigger_id,
-            }
-            break
-
-if connection is not None:
-    connection.close()
-
-if selected:
-    print(json.dumps(selected))
-PY
+    halo_state_cli evaluate-triggers --trigger-file "$trigger_file"
+    return $?
 }
 
 execute_aware_generation() {
@@ -2783,25 +2413,39 @@ handle_sensory_command() {
 
 select_commentary_line() {
     local commentary_file="$1"
-    local commentary_db
-    commentary_db="${HALO_COMMENTARY_HISTORY_DB:-$COMMENTARY_HISTORY_DB_DEFAULT}"
-    mkdir -p "$STATE_DIR"
+    local postgres_dsn postgres_schema
+    postgres_dsn="${HALO_STATE_POSTGRES_DSN:-}"
+    postgres_schema="${HALO_STATE_POSTGRES_SCHEMA:-halo}"
+    if [ -z "$postgres_dsn" ]; then
+        echo "Error: HALO_STATE_POSTGRES_DSN must be configured for commentary history." >&2
+        return 1
+    fi
 
-    python3 - "$commentary_file" "$commentary_db" "$HALO_COMMENTARY_SIMILARITY_THRESHOLD" "$HALO_COMMENTARY_RECENT_SIMILARITY_WINDOW" <<'PY'
-import collections
+    python3 - "$commentary_file" "$postgres_dsn" "$postgres_schema" "$HALO_COMMENTARY_SIMILARITY_THRESHOLD" "$HALO_COMMENTARY_RECENT_SIMILARITY_WINDOW" <<'PY'
 import datetime
 import difflib
 import hashlib
 import pathlib
 import random
 import re
-import sqlite3
 import sys
 
 commentary_path = pathlib.Path(sys.argv[1])
-db_path = pathlib.Path(sys.argv[2])
-similarity_threshold = float(sys.argv[3])
-recent_similarity_window = max(0, int(sys.argv[4]))
+postgres_dsn = sys.argv[2].strip()
+schema = (sys.argv[3] or 'halo').strip()
+similarity_threshold = float(sys.argv[4])
+recent_similarity_window = max(0, int(sys.argv[5]))
+
+if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', schema):
+    print('Invalid HALO_STATE_POSTGRES_SCHEMA value.', file=sys.stderr)
+    raise SystemExit(1)
+
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+except Exception:
+    print('psycopg is required for Postgres-backed commentary history.', file=sys.stderr)
+    raise SystemExit(1)
 
 stop_words = {
     'a', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'being', 'but', 'by', 'for', 'from', 'have', 'has',
@@ -2880,106 +2524,91 @@ if not lines:
     print('No commentary lines available.', file=sys.stderr)
     raise SystemExit(1)
 
-db_path.parent.mkdir(parents=True, exist_ok=True)
-connection = sqlite3.connect(db_path)
-connection.execute('PRAGMA journal_mode = WAL')
-connection.execute('PRAGMA busy_timeout = 5000')
-connection.execute(
-    '''
-    CREATE TABLE IF NOT EXISTS commentary_cycles (
-        commentary_file TEXT PRIMARY KEY,
-        current_cycle INTEGER NOT NULL DEFAULT 0,
-        updated_at TEXT NOT NULL
-    )
-    '''
-)
-connection.execute(
-    '''
-    CREATE TABLE IF NOT EXISTS commentary_history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        commentary_file TEXT NOT NULL,
-        line_hash TEXT NOT NULL,
-        line_text TEXT NOT NULL,
-        cycle INTEGER NOT NULL,
-        played_at TEXT NOT NULL,
-        UNIQUE(commentary_file, line_hash, cycle)
-    )
-    '''
-)
-
 commentary_key = str(commentary_path.resolve())
 played_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+selected = None
 
-try:
-    connection.execute('BEGIN IMMEDIATE')
-    row = connection.execute(
-        'SELECT current_cycle FROM commentary_cycles WHERE commentary_file = ?',
-        (commentary_key,),
-    ).fetchone()
-    current_cycle = int(row[0]) if row else 0
+with psycopg.connect(postgres_dsn, row_factory=dict_row) as connection:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f'''
+            SELECT current_cycle
+            FROM {schema}.commentary_cycles
+            WHERE commentary_file = %s
+            ''',
+            (commentary_key,),
+        )
+        row = cursor.fetchone()
+        current_cycle = int(row['current_cycle']) if row else 0
 
-    played_hashes = {
-        record[0]
-        for record in connection.execute(
-            'SELECT line_hash FROM commentary_history WHERE commentary_file = ? AND cycle = ?',
+        cursor.execute(
+            f'''
+            SELECT line_hash
+            FROM {schema}.commentary_line_history
+            WHERE commentary_file = %s AND cycle = %s
+            ''',
             (commentary_key, current_cycle),
         )
-    }
+        played_hashes = {record['line_hash'] for record in cursor.fetchall()}
 
-    recent_lines = [
-        record[0]
-        for record in connection.execute(
-            'SELECT line_text FROM commentary_history WHERE commentary_file = ? ORDER BY id DESC LIMIT ?',
+        cursor.execute(
+            f'''
+            SELECT line_text
+            FROM {schema}.commentary_line_history
+            WHERE commentary_file = %s
+            ORDER BY played_at DESC
+            LIMIT %s
+            ''',
             (commentary_key, recent_similarity_window),
         )
-    ]
+        recent_lines = [record['line_text'] for record in cursor.fetchall() if record.get('line_text')]
 
-    def line_hash(value: str) -> str:
-        return hashlib.sha256(value.encode('utf-8')).hexdigest()
+        def line_hash(value: str) -> str:
+            return hashlib.sha256(value.encode('utf-8')).hexdigest()
 
-    available = [
-        line for line in lines
-        if line_hash(line) not in played_hashes and not is_too_similar(line, recent_lines)
-    ]
-    if not available:
-        fallback = [line for line in lines if line_hash(line) not in played_hashes]
-        if not fallback:
-            current_cycle += 1
-            fallback = [line for line in lines if not is_too_similar(line, recent_lines)]
-            if fallback:
-                selected = choose_least_similar(fallback, recent_lines)
+        available = [
+            line for line in lines
+            if line_hash(line) not in played_hashes and not is_too_similar(line, recent_lines)
+        ]
+        if not available:
+            fallback = [line for line in lines if line_hash(line) not in played_hashes]
+            if not fallback:
+                current_cycle += 1
+                fallback = [line for line in lines if not is_too_similar(line, recent_lines)]
+                if fallback:
+                    selected = choose_least_similar(fallback, recent_lines)
+                else:
+                    selected = choose_least_similar(lines[:], recent_lines)
             else:
-                selected = choose_least_similar(lines[:], recent_lines)
+                selected = choose_least_similar(fallback, recent_lines)
         else:
-            selected = choose_least_similar(fallback, recent_lines)
-    else:
-        selected = random.choice(available)
+            selected = random.choice(available)
 
-    if selected is None:
-        print('No commentary lines available after filtering.', file=sys.stderr)
-        raise SystemExit(1)
+        if selected is None:
+            print('No commentary lines available after filtering.', file=sys.stderr)
+            raise SystemExit(1)
 
-    selected_hash = line_hash(selected)
-    connection.execute(
-        '''
-        INSERT INTO commentary_history (commentary_file, line_hash, line_text, cycle, played_at)
-        VALUES (?, ?, ?, ?, ?)
-        ''',
-        (commentary_key, selected_hash, selected, current_cycle, played_at),
-    )
-    connection.execute(
-        '''
-        INSERT INTO commentary_cycles (commentary_file, current_cycle, updated_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(commentary_file) DO UPDATE SET
-            current_cycle = excluded.current_cycle,
-            updated_at = excluded.updated_at
-        ''',
-        (commentary_key, current_cycle, played_at),
-    )
+        selected_hash = line_hash(selected)
+        cursor.execute(
+            f'''
+            INSERT INTO {schema}.commentary_line_history (
+                commentary_file, line_hash, line_text, cycle, played_at
+            ) VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (commentary_file, line_hash, cycle) DO NOTHING
+            ''',
+            (commentary_key, selected_hash, selected, current_cycle, played_at),
+        )
+        cursor.execute(
+            f'''
+            INSERT INTO {schema}.commentary_cycles (commentary_file, current_cycle, updated_at)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (commentary_file) DO UPDATE SET
+                current_cycle = EXCLUDED.current_cycle,
+                updated_at = EXCLUDED.updated_at
+            ''',
+            (commentary_key, current_cycle, played_at),
+        )
     connection.commit()
-finally:
-    connection.close()
 
 print(selected)
 PY

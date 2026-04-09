@@ -1,0 +1,153 @@
+{
+  "repo": "mercury-tts",
+  "generatedAtUtc": "2026-04-08T20:25:40.682269+00:00",
+  "bundles": [
+    {
+      "name": "falcon-halo-runtime",
+      "environment": "falcon-host",
+      "kind": "container-wrapper",
+      "status": "active",
+      "liveTarget": "/usr/local/bin/halo",
+      "clusterTarget": null,
+      "archiveName": "falcon-halo-runtime.tar.gz",
+      "files": [
+        "Dockerfile.halo-runtime",
+        "docker-compose.halo-runtime.yml",
+        "halo",
+        "halo_cache.py",
+        "halo_review.py",
+        "halo_state/cli.py",
+        "halo_state/config.py",
+        "halo_state/ingest.py",
+        "halo_state/postgres.py",
+        "halo_state/service.py",
+        "halo_state/utils.py",
+        "halo_state/__init__.py",
+        "halo_state/__pycache__/cli.cpython-312.pyc",
+        "halo_state/__pycache__/cli.cpython-38.pyc",
+        "halo_state/__pycache__/config.cpython-312.pyc",
+        "halo_state/__pycache__/config.cpython-38.pyc",
+        "halo_state/__pycache__/ingest.cpython-312.pyc",
+        "halo_state/__pycache__/ingest.cpython-38.pyc",
+        "halo_state/__pycache__/postgres.cpython-312.pyc",
+        "halo_state/__pycache__/postgres.cpython-38.pyc",
+        "halo_state/__pycache__/service.cpython-312.pyc",
+        "halo_state/__pycache__/service.cpython-38.pyc",
+        "halo_state/__pycache__/utils.cpython-312.pyc",
+        "halo_state/__pycache__/utils.cpython-38.pyc",
+        "halo_state/__pycache__/__init__.cpython-312.pyc",
+        "halo_state/__pycache__/__init__.cpython-38.pyc",
+        "prompts/halo/aware-kind-commentary.txt",
+        "prompts/halo/aware-kind-monologue.txt",
+        "prompts/halo/aware-kind-observation.txt",
+        "prompts/halo/aware-kind-story.txt",
+        "prompts/halo/aware-system.txt",
+        "prompts/halo/canon-context-section.txt",
+        "prompts/halo/generation-memory-guidance.txt",
+        "prompts/halo/generation-memory-section.txt",
+        "prompts/halo/halo-persona.txt",
+        "prompts/halo/prompts-guide.md",
+        "prompts/halo/README.md",
+        "prompts/halo/review-length-long.txt",
+        "prompts/halo/review-length-medium.txt",
+        "prompts/halo/review-length-short.txt",
+        "prompts/halo/review-precheck-system.txt",
+        "prompts/halo/review-precheck-user.txt",
+        "prompts/halo/review-system.txt",
+        "prompts/halo/storygen-system.txt",
+        "prompts/halo/storygen-user-podcast.txt",
+        "prompts/halo/storygen-user-story.txt",
+        "reference/2001-originalscript-canon-supplement.txt",
+        "reference/2001-originalscript-summary.txt",
+        "reference/2001-originalscript.txt",
+        "requirements-state.txt",
+        "scripts/halo-container-entrypoint.sh",
+        "scripts/halo-container-wrapper.sh",
+        "sensory/cli.py",
+        "sensory/knowledge_store.py",
+        "sensory/manager.py",
+        "sensory/models.py",
+        "sensory/observation_log.py",
+        "sensory/perception.py",
+        "sensory/__init__.py",
+        "sensory/sensors/base.py",
+        "sensory/sensors/blink.py",
+        "sensory/sensors/host.py",
+        "sensory/sensors/network.py",
+        "sensory/sensors/photoprism.py",
+        "sensory/sensors/__init__.py",
+        "scripts/deploy-falcon-runtime.sh",
+        "tools/halo.ps1",
+        "tools/halo-wsl-client.sh",
+        "tools/install-halo-wsl-client.sh"
+      ]
+    },
+    {
+      "name": "falcon-hal-runtime",
+      "environment": "falcon-host",
+      "kind": "script",
+      "status": "active",
+      "liveTarget": "/usr/local/bin/hal",
+      "clusterTarget": null,
+      "archiveName": "falcon-hal-runtime.tar.gz",
+      "files": [
+        "hal",
+        "scripts/deploy-falcon-runtime.sh"
+      ]
+    },
+    {
+      "name": "falcon-hal-tts-daemon",
+      "environment": "falcon-host",
+      "kind": "service",
+      "status": "active",
+      "liveTarget": "systemd:hal-tts.service",
+      "clusterTarget": null,
+      "archiveName": "falcon-hal-tts-daemon.tar.gz",
+      "files": [
+        "streaming_safe_daemon.go",
+        "hal-tts.service"
+      ]
+    },
+    {
+      "name": "falcon-k3s-hal-tts",
+      "environment": "falcon-k3s",
+      "kind": "k8s",
+      "status": "secondary",
+      "liveTarget": null,
+      "clusterTarget": "tts/hal-tts",
+      "archiveName": "falcon-k3s-hal-tts.tar.gz",
+      "files": [
+        "Dockerfile.hal-tts",
+        "deploy-hal-tts.sh",
+        "docs/deployment-workflow.md",
+        "k8s/hal-tts-deployment.yaml"
+      ]
+    },
+    {
+      "name": "archos-primary-xtts",
+      "environment": "archos-host",
+      "kind": "api",
+      "status": "external",
+      "liveTarget": "http://192.168.1.165:5003/api/tts",
+      "clusterTarget": null,
+      "archiveName": "archos-primary-xtts.tar.gz",
+      "files": [
+        "halo"
+      ]
+    },
+    {
+      "name": "windows-halo-wrapper",
+      "environment": "windows-client",
+      "kind": "wrapper",
+      "status": "active",
+      "liveTarget": "ssh falcon:/usr/local/bin/halo",
+      "clusterTarget": null,
+      "archiveName": "windows-halo-wrapper.tar.gz",
+      "files": [
+        "tools/halo.ps1",
+        "tools/install-xtts-portforwards.ps1",
+        "tools/watch-xtts-portforwards.ps1"
+      ]
+    }
+  ]
+}
