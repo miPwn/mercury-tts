@@ -31,6 +31,16 @@ spec:
           value: "/usr/local/bin:/usr/bin:/bin"
         - name: HOME
           value: "/app"
+        - name: LOG_LEVEL
+          value: "info"
+        - name: LOGCITY_ENABLED
+          value: "1"
+        - name: LOGCITY_ENDPOINT
+          value: "http://falcon.mipwn.local:3100/loki/api/v1/push"
+        - name: LOGCITY_TENANT_ID
+          value: "halo-system"
+        - name: LOGCITY_ENV
+          value: "dev"
         - name: PULSE_RUNTIME_PATH
           value: "/run/user/1000/pulse"
         - name: PULSE_SERVER

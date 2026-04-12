@@ -23,6 +23,7 @@ RUN mkdir -p /tmp /app/cache
 # Set environment variables
 ENV PATH="/usr/local/bin:/usr/bin:/bin"
 ENV HOME="/app"
+ENV LOG_LEVEL="info"
 
 # Expose the port
 EXPOSE 8091

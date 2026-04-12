@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net/http"
 	neturl "net/url"
 	"os"
@@ -20,6 +21,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"tts-pipeline-test/internal/observability"
 )
 
 const (
@@ -30,9 +33,6 @@ const (
 	maxRetries     = 2
 	// Latency optimization: multiple TTS endpoints for load distribution
 	maxConcurrentGeneration = 10 // Aggressive concurrent generation
-	// Zero-latency logging
-	logBufferSize = 1000 // Async log buffer size
-	logFile       = "/var/log/tts-daemon.log"
 )
 
 var (
@@ -67,87 +67,10 @@ type TTSChunk struct {
 	Predecessor   *TTSChunk // Link to previous chunk for ordering
 }
 
-// AsyncLogger provides zero-latency logging
-type AsyncLogger struct {
-	logChan chan string
-	logFile *os.File
-	done    chan bool
-}
-
-// NewAsyncLogger creates a zero-latency async logger
-func NewAsyncLogger(filename string) (*AsyncLogger, error) {
-	logFile, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		// Fallback to /tmp if /var/log not writable
-		tmpLogFile := "/tmp/tts-daemon.log"
-		logFile, err = os.OpenFile(tmpLogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			return nil, fmt.Errorf("unable to create log file: %v", err)
-		}
-	}
-
-	logger := &AsyncLogger{
-		logChan: make(chan string, logBufferSize),
-		logFile: logFile,
-		done:    make(chan bool),
-	}
-
-	// Start async log writer goroutine
-	go logger.writer()
-
-	return logger, nil
-}
-
-// Log sends message to async buffer (zero-latency)
-func (al *AsyncLogger) Log(format string, args ...interface{}) {
-	timestamp := time.Now().Format("2006/01/02 15:04:05.000")
-	message := fmt.Sprintf("[%s] %s\n", timestamp, fmt.Sprintf(format, args...))
-
-	// Non-blocking send to buffer
-	select {
-	case al.logChan <- message:
-		// Successfully queued
-	default:
-		// Buffer full - drop message to maintain zero latency
-		// This ensures logging never blocks the audio pipeline
-	}
-}
-
-// writer handles async log writing (runs in separate goroutine)
-func (al *AsyncLogger) writer() {
-	for {
-		select {
-		case message := <-al.logChan:
-			al.logFile.WriteString(message)
-			al.logFile.Sync() // Ensure immediate write to disk
-		case <-al.done:
-			// Drain remaining messages
-			for len(al.logChan) > 0 {
-				message := <-al.logChan
-				al.logFile.WriteString(message)
-			}
-			al.logFile.Close()
-			return
-		}
-	}
-}
-
-// Close gracefully shuts down async logger
-func (al *AsyncLogger) Close() {
-	close(al.done)
-}
-
 func NewStreamingDaemon() *StreamingDaemon {
 	outputDir := "/tmp/streaming_safe_daemon"
 	os.RemoveAll(outputDir)
 	os.MkdirAll(outputDir, 0755)
-
-	// Initialize zero-latency async logger
-	logger, err := NewAsyncLogger(logFile)
-	if err != nil {
-		log.Printf("Warning: Could not initialize async logger: %v", err)
-		logger = nil // Continue without file logging
-	}
 
 	warmupPool := make(chan *http.Client, warmupCount)
 
@@ -168,11 +91,6 @@ func NewStreamingDaemon() *StreamingDaemon {
 		// Initialize load-balanced TTS endpoints (only working pods)
 		ttsEndpoints:  []string{ttsURL1, ttsURL2},
 		playbackChain: make(chan *TTSChunk, maxConcurrentGeneration),
-		logger:        logger,
-	}
-
-	if daemon.logger != nil {
-		daemon.logger.Log("INIT: Streaming daemon initializing with async logging")
 	}
 
 	select {
@@ -192,7 +110,6 @@ type StreamingDaemon struct {
 	// Removed audioMutex - using intelligent coordination instead
 	ttsEndpoints  []string       // Multiple TTS endpoints for load balancing
 	playbackChain chan *TTSChunk // Sequential playback coordination
-	logger        *AsyncLogger   // Zero-latency logging
 }
 
 func (d *StreamingDaemon) preWarmSystem() {
@@ -565,10 +482,7 @@ func (d *StreamingDaemon) streamingPlaybackOptimized(chunks []*TTSChunk, ttsStar
 			timeToReady := chunk.EndTime.Sub(ttsStart)
 			log.Printf("READY: Chunk %d ready in %v (endpoint: %s)", chunk.Index, timeToReady, chunk.TTSEndpoint)
 
-			// Zero-latency async logging of chunk completion
-			if daemon := d; daemon != nil && daemon.logger != nil {
-				daemon.logger.Log("CHUNK: Ready chunk %d in %v via %s", chunk.Index, timeToReady, chunk.TTSEndpoint)
-			}
+			slog.Info("chunk_ready", "chunk_index", chunk.Index, "time_to_ready_ms", timeToReady.Milliseconds(), "tts_endpoint", chunk.TTSEndpoint)
 
 			// SEQUENTIAL PLAYBACK: Wait for predecessor to complete before starting
 			if chunk.Predecessor != nil && chunk.Predecessor.PlayCompleted != nil {
@@ -690,10 +604,7 @@ func (d *StreamingDaemon) processSpeak(sentences []string, speaker string) {
 	timestamp := strconv.FormatInt(time.Now().UnixNano(), 10)
 	log.Printf("LATENCY-OPTIMIZED: Processing %d sentences with concurrent generation", len(sentences))
 
-	// Zero-latency async logging
-	if d.logger != nil {
-		d.logger.Log("REQUEST: Processing %d sentences, speaker=%s, timestamp=%s", len(sentences), speaker, timestamp)
-	}
+	slog.Info("speak_request_processing", "sentences", len(sentences), "speaker", speaker, "request_timestamp", timestamp)
 
 	// Create chunks with load balancing preparation
 	chunks := make([]*TTSChunk, len(sentences))
@@ -733,25 +644,18 @@ func (d *StreamingDaemon) handleSpeak(w http.ResponseWriter, r *http.Request) {
 
 	var req SpeakRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		if d.logger != nil {
-			d.logger.Log("ERROR: Invalid JSON from %s: %v", r.RemoteAddr, err)
-		}
+		slog.Warn("invalid_json_request", "remote_addr", r.RemoteAddr, "error", err.Error())
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 
 	if len(req.Sentences) == 0 {
-		if d.logger != nil {
-			d.logger.Log("ERROR: Empty sentences from %s", r.RemoteAddr)
-		}
+		slog.Warn("empty_sentences_request", "remote_addr", r.RemoteAddr)
 		http.Error(w, "No sentences provided", http.StatusBadRequest)
 		return
 	}
 
-	// Log incoming request
-	if d.logger != nil {
-		d.logger.Log("API: Incoming request from %s - %d sentences, speaker=%s", r.RemoteAddr, len(req.Sentences), req.Speaker)
-	}
+	slog.Info("speak_request_received", "remote_addr", r.RemoteAddr, "sentences", len(req.Sentences), "speaker", req.Speaker)
 
 	// Process with streaming playback
 	go d.processSpeak(req.Sentences, req.Speaker)
@@ -786,9 +690,7 @@ func (d *StreamingDaemon) handleSpeakClient(w http.ResponseWriter, r *http.Reque
 
 	var req SpeakRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		if d.logger != nil {
-			d.logger.Log("ERROR: Invalid JSON (client) from %s: %v", r.RemoteAddr, err)
-		}
+		slog.Warn("invalid_client_json_request", "remote_addr", r.RemoteAddr, "error", err.Error())
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
@@ -844,9 +746,7 @@ func (d *StreamingDaemon) generateAndRespond(w http.ResponseWriter, sentences []
 	urls := make([]string, 0, len(chunks))
 	for _, chunk := range chunks {
 		if chunk.Error != nil {
-			if d.logger != nil {
-				d.logger.Log("ERROR: Client chunk %d failed: %v", chunk.Index, chunk.Error)
-			}
+			slog.Error("client_chunk_generation_failed", "chunk_index", chunk.Index, "error", chunk.Error.Error())
 			continue
 		}
 		urls = append(urls, fmt.Sprintf("/audio/%s_%d.wav", timestamp, chunk.Index))
@@ -876,6 +776,23 @@ func getEnvDefault(key, def string) string {
 }
 
 func main() {
+	logOptions, err := observability.LoadOptionsFromEnv("mercury-tts")
+	if err != nil {
+		log.Fatal(err)
+	}
+	logger, closeLogger, err := observability.NewLoggerWithOptions(observability.ParseLevel(getEnvDefault("LOG_LEVEL", "info")), logOptions)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = closeLogger(ctx)
+	}()
+	slog.SetDefault(logger.Logger)
+	log.SetFlags(0)
+	log.SetOutput(observability.NewStdlibWriter(logger, slog.LevelInfo))
+
 	daemon := NewStreamingDaemon()
 
 	http.HandleFunc("/speak", daemon.handleSpeak)
