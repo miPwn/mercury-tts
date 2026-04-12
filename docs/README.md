@@ -1,20 +1,17 @@
 # Mercury TTS Docs
 
-This directory contains the maintained documentation for the current `halo` runtime.
+This docs set now covers only the speech-rendering service.
 
-## Architecture
+Maintained documents:
 
-- [architecture/system-overview.md](architecture/system-overview.md)
-- [architecture/components.md](architecture/components.md)
-- [architecture/aware-state-system.md](architecture/aware-state-system.md)
-- [architecture/agent-family-state.md](architecture/agent-family-state.md)
-- [architecture/RFC-20260411-agent-family-memory-state.md](architecture/RFC-20260411-agent-family-memory-state.md)
-- [architecture/voice-architecture.md](architecture/voice-architecture.md)
+- [architecture/voice-architecture.md](F:/DEVELOPMENT/FALCON_LOCAL/halo-system/mercury-tts/docs/architecture/voice-architecture.md)
+- [architecture/system-overview.md](F:/DEVELOPMENT/FALCON_LOCAL/halo-system/mercury-tts/docs/architecture/system-overview.md)
+- [architecture/components.md](F:/DEVELOPMENT/FALCON_LOCAL/halo-system/mercury-tts/docs/architecture/components.md)
+- [development/testing-strategy.md](F:/DEVELOPMENT/FALCON_LOCAL/halo-system/mercury-tts/docs/development/testing-strategy.md)
 
-## Development
+Removed from this repo:
 
-- [development/testing-strategy.md](development/testing-strategy.md)
-
-## Notes
-
-The older docs index referenced many files that do not exist in the current repo. This index now only lists documents that are actually present and maintained.
+- HAL runtime orchestration
+- HAL memory/state architecture
+- sensory and aware-mode documentation
+- host runtime deployment for the old `halo` shell

@@ -14,40 +14,39 @@ type Config struct {
 	TTSHealthEndpoint  string
 
 	// Daemon Settings
-	DaemonPort        string
-	DaemonHost        string
-	DaemonReadTimeout time.Duration
+	DaemonPort         string
+	DaemonHost         string
+	DaemonReadTimeout  time.Duration
 	DaemonWriteTimeout time.Duration
-	DaemonIdleTimeout time.Duration
+	DaemonIdleTimeout  time.Duration
 
 	// Audio Settings
-	DefaultSpeaker    string
-	HALSpeaker       string
-	DragThreshold    time.Duration
-	MaxRetries       int
-	WarmupCount      int
+	DefaultSpeaker string
+	HALSpeaker     string
+	DragThreshold  time.Duration
+	MaxRetries     int
+	WarmupCount    int
 
 	// HTTP Performance
-	HTTPTimeout                time.Duration
-	HTTPResponseHeaderTimeout  time.Duration
+	HTTPTimeout               time.Duration
+	HTTPResponseHeaderTimeout time.Duration
 	MaxIdleConnections        int
 	MaxIdleConnectionsPerHost int
 	IdleConnectionTimeout     time.Duration
 
 	// File System
-	TmpAudioDir    string
-	LogLevel       string
-	LogFile        string
+	TmpAudioDir string
+	LogLevel    string
+	LogFile     string
 
 	// Development
 	EnablePerformanceMetrics bool
-	EnableDebugLogging      bool
-	MockTTSServer           bool
+	EnableDebugLogging       bool
 
 	// Kubernetes
-	TTSNamespace       string
-	TTSDeploymentName  string
-	KubectlContext     string
+	TTSNamespace      string
+	TTSDeploymentName string
+	KubectlContext    string
 }
 
 // LoadConfig loads configuration from environment variables with secure defaults
@@ -73,11 +72,11 @@ func LoadConfig() *Config {
 		WarmupCount:    getEnvInt("WARMUP_CONNECTION_COUNT", 5),
 
 		// HTTP Performance
-		HTTPTimeout:                getEnvDuration("HTTP_TIMEOUT_SECONDS", 30*time.Second),
-		HTTPResponseHeaderTimeout:  getEnvDuration("HTTP_RESPONSE_HEADER_TIMEOUT_SECONDS", 10*time.Second),
-		MaxIdleConnections:         getEnvInt("MAX_IDLE_CONNECTIONS", 100),
-		MaxIdleConnectionsPerHost:  getEnvInt("MAX_IDLE_CONNECTIONS_PER_HOST", 20),
-		IdleConnectionTimeout:      getEnvDuration("IDLE_CONNECTION_TIMEOUT_SECONDS", 300*time.Second),
+		HTTPTimeout:               getEnvDuration("HTTP_TIMEOUT_SECONDS", 30*time.Second),
+		HTTPResponseHeaderTimeout: getEnvDuration("HTTP_RESPONSE_HEADER_TIMEOUT_SECONDS", 10*time.Second),
+		MaxIdleConnections:        getEnvInt("MAX_IDLE_CONNECTIONS", 100),
+		MaxIdleConnectionsPerHost: getEnvInt("MAX_IDLE_CONNECTIONS_PER_HOST", 20),
+		IdleConnectionTimeout:     getEnvDuration("IDLE_CONNECTION_TIMEOUT_SECONDS", 300*time.Second),
 
 		// File System
 		TmpAudioDir: getEnvString("TMP_AUDIO_DIR", "/tmp/tts_pipeline_cache"),
@@ -86,8 +85,7 @@ func LoadConfig() *Config {
 
 		// Development
 		EnablePerformanceMetrics: getEnvBool("ENABLE_PERFORMANCE_METRICS", true),
-		EnableDebugLogging:      getEnvBool("ENABLE_DEBUG_LOGGING", false),
-		MockTTSServer:           getEnvBool("MOCK_TTS_SERVER", false),
+		EnableDebugLogging:       getEnvBool("ENABLE_DEBUG_LOGGING", false),
 
 		// Kubernetes
 		TTSNamespace:      getEnvString("TTS_NAMESPACE", "tts"),
