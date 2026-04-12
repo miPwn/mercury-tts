@@ -114,7 +114,7 @@ class PostgresStateService:
                     "topic": row["topic"] or "",
                     "summary_snippet": row["summary_snippet"] or "",
                     "artifact_path": row["artifact_path"] or "",
-                    "text_excerpt": (row["text"] or "").strip()[:700],
+                    "text_excerpt": (row["text"] or "").strip()[:4000],
                 }
             )
         return entries
@@ -151,7 +151,8 @@ class PostgresStateService:
         artifact_path: str,
     ) -> None:
         created_at = now_iso()
-        summary_snippet = summarize_text(text)
+        summary_seed = f"{topic}\n{text}" if topic else text
+        summary_snippet = summarize_text(summary_seed)
         metadata = {
             "trigger_id": trigger_id,
             "artifact_path": artifact_path,

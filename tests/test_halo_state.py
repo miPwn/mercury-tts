@@ -59,6 +59,40 @@ class MemoryPayloadTests(unittest.TestCase):
         self.assertEqual(payload["recent"][0]["topic"], "system drift")
         self.assertEqual(payload["relevant"][0]["topic"], "deep space silence")
 
+    def test_build_memory_payload_ignores_stopwords_when_scoring_relevance(self):
+        rows = [
+            {
+                "created_at": "2026-04-03T10:00:00+00:00",
+                "kind": "conversation",
+                "trigger_source": "halo-chat",
+                "topic": "status check",
+                "summary_snippet": "This is a routine operational exchange.",
+                "artifact_path": "",
+                "text_excerpt": "The operator is asking about status and nothing else.",
+            },
+            {
+                "created_at": "2026-04-03T09:00:00+00:00",
+                "kind": "conversation",
+                "trigger_source": "halo-chat",
+                "topic": "Jasmine identity",
+                "summary_snippet": "Jasmine is the operator's wife.",
+                "artifact_path": "",
+                "text_excerpt": "The operator stated that Jasmine is his wife.",
+            },
+        ]
+
+        payload = build_memory_payload(
+            rows,
+            kind="conversation",
+            topic="who is jasmine",
+            trigger_source="halo-chat",
+            recent_limit=0,
+            relevant_limit=1,
+            summary="summary",
+        )
+
+        self.assertEqual(payload["relevant"][0]["topic"], "Jasmine identity")
+
 
 class SummaryTextTests(unittest.TestCase):
     def test_build_summary_text_formats_digest(self):

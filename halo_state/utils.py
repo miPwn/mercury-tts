@@ -6,6 +6,46 @@ import re
 from pathlib import Path
 from typing import Iterable
 
+_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "how",
+    "i",
+    "in",
+    "is",
+    "it",
+    "me",
+    "my",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "their",
+    "them",
+    "they",
+    "this",
+    "to",
+    "was",
+    "we",
+    "what",
+    "when",
+    "where",
+    "who",
+    "why",
+    "with",
+    "you",
+    "your",
+}
+
 
 def now_iso() -> str:
     return _dt.datetime.now(_dt.timezone.utc).isoformat()
@@ -20,7 +60,11 @@ def summarize_text(value: str, max_chars: int = 260) -> str:
 
 
 def tokenize(value: str) -> set[str]:
-    return set(re.findall(r"[a-z0-9]+", (value or "").lower()))
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]+", (value or "").lower())
+        if token not in _STOPWORDS and (len(token) > 2 or token.isdigit())
+    }
 
 
 def build_memory_payload(
@@ -44,7 +88,9 @@ def build_memory_payload(
     }
     entries = list(rows)
     payload["recent"] = entries[:recent_limit]
-    recent_keys = {(entry["created_at"], entry["summary_snippet"]) for entry in payload["recent"]}
+    recent_keys = {
+        (entry["created_at"], entry["summary_snippet"]) for entry in payload["recent"]
+    }
 
     query_tokens = tokenize(topic)
     query_tokens.update(tokenize(kind))
@@ -64,7 +110,8 @@ def build_memory_payload(
     payload["relevant"] = [
         entry
         for score, _, entry in scored
-        if score > 0 and (entry["created_at"], entry["summary_snippet"]) not in recent_keys
+        if score > 0
+        and (entry["created_at"], entry["summary_snippet"]) not in recent_keys
     ][:relevant_limit]
     return payload
 
@@ -119,10 +166,18 @@ def chunk_text(text: str, max_chars: int = 1200) -> list[dict[str, object]]:
             if buffer:
                 chunks.append(buffer)
                 buffer = ""
-            sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", paragraph) if part.strip()]
+            sentences = [
+                part.strip()
+                for part in re.split(r"(?<=[.!?])\s+", paragraph)
+                if part.strip()
+            ]
             sentence_buffer = ""
             for sentence in sentences:
-                sentence_candidate = f"{sentence_buffer} {sentence}".strip() if sentence_buffer else sentence
+                sentence_candidate = (
+                    f"{sentence_buffer} {sentence}".strip()
+                    if sentence_buffer
+                    else sentence
+                )
                 if sentence_buffer and len(sentence_candidate) > max_chars:
                     chunks.append(sentence_buffer)
                     sentence_buffer = sentence
@@ -132,7 +187,9 @@ def chunk_text(text: str, max_chars: int = 1200) -> list[dict[str, object]]:
                     word_buffer = []
                     current_len = 0
                     for word in words:
-                        candidate_len = current_len + (1 if word_buffer else 0) + len(word)
+                        candidate_len = (
+                            current_len + (1 if word_buffer else 0) + len(word)
+                        )
                         if word_buffer and candidate_len > max_chars:
                             chunks.append(" ".join(word_buffer))
                             word_buffer = [word]

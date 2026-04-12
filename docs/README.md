@@ -7,6 +7,8 @@ This directory contains the maintained documentation for the current `halo` runt
 - [architecture/system-overview.md](architecture/system-overview.md)
 - [architecture/components.md](architecture/components.md)
 - [architecture/aware-state-system.md](architecture/aware-state-system.md)
+- [architecture/agent-family-state.md](architecture/agent-family-state.md)
+- [architecture/RFC-20260411-agent-family-memory-state.md](architecture/RFC-20260411-agent-family-memory-state.md)
 - [architecture/voice-architecture.md](architecture/voice-architecture.md)
 
 ## Development

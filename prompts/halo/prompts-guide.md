@@ -9,6 +9,11 @@ This directory contains the active prompt layers used to generate HAL outputs.
 - `halo-persona.txt`  
   The primary HAL identity layer used by story generation, aware generation, and review generation. This file defines who HAL is, how he thinks, how he sounds, and the emotional/intellectual pressure profile that should remain stable across modes.
 
+### Chat Control Plane
+
+- `chat-system.txt`
+  Guidance for operator-facing interactive chat. This layer tells HAL how to handle commands, status requests, short conversational turns, and ongoing control-plane dialogue without collapsing into either generic assistant behavior or long-form transmission mode.
+
 ### Story Generation
 
 - `storygen-system.txt`  

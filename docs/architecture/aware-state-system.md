@@ -6,6 +6,8 @@ HAL aware-mode runtime state is now Postgres-backed. Local JSON files remain onl
 
 This document defines the implemented architecture and the remaining expansion areas.
 
+For the next expansion that introduces temporal anchoring, subsystem-family state, diaries, and revisable relationship memory, see [agent-family-state.md](agent-family-state.md).
+
 ## Design Goals
 
 - keep HAL's identity persistent across runs
@@ -85,6 +87,7 @@ Precedence during generation should be:
 - `memory_entities`: people, places, systems, concepts, and recurring subjects
 - `memory_entity_mentions`: links between events and entities
 - `memory_beliefs`: promoted conclusions or working beliefs held by HAL, with confidence and provenance
+- future expansion should add append-only claims and diary-linked continuity rather than overloading beliefs as the only structured memory layer
 
 ### Sensory and Observational State
 
@@ -202,4 +205,5 @@ As of 2026-04-09:
 
 - further reduce inline Python blocks in `halo` by moving additional logic into `halo_state` modules
 - expand retrieval ranking and memory promotion workflows as separate explicit services
+- add temporal anchoring, subsystem-family state, diary support, and claim-based relationship memory as defined in [agent-family-state.md](agent-family-state.md)
 - keep guardrail checks in CI so architecture docs and runtime behavior cannot drift silently

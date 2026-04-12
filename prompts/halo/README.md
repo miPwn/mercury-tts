@@ -7,6 +7,7 @@ The code still adds runtime context in code, such as timestamps, host details, t
 ## Files
 
 - `halo-persona.txt`: shared persona base for story generation, aware generation, and review generation.
+- `chat-system.txt`: interactive control-plane chat guidance layered after the shared persona.
 - `storygen-system.txt`: story and podcast system-specific guidance layered after the shared persona.
 - `storygen-user-story.txt`: user prompt template for story requests.
 - `storygen-user-podcast.txt`: user prompt template for podcast requests.
