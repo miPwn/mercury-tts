@@ -1,0 +1,75 @@
+#!/bin/bash
+
+SCRIPT_SELF="${BASH_SOURCE[0]:-$0}"
+if command -v realpath >/dev/null 2>&1; then
+    SCRIPT_SELF=$(realpath "$SCRIPT_SELF" 2>/dev/null || printf '%s' "$SCRIPT_SELF")
+fi
+SCRIPT_DIR=$(cd -- "$(dirname -- "$SCRIPT_SELF")" && pwd)
+VERSION_FILE="${HALO_VERSION_FILE:-$SCRIPT_DIR/.halo-version}"
+XTTS_ENDPOINT="${HALO_XTTS_ENDPOINT:-http://localhost:5004/api/tts}"
+XTTS_HEALTH_URL="${HALO_XTTS_HEALTH_URL:-http://localhost:5004/}"
+STYLE_WAV="${HALO_XTTS_STYLE_WAV:-/app/references/001.wav}"
+LANGUAGE="${HALO_XTTS_LANGUAGE:-en}"
+
+print_version() {
+    if [ -f "$VERSION_FILE" ]; then
+        cat "$VERSION_FILE"
+        return
+    fi
+    printf '%s\n' "${HAL_SERVICE_VERSION:-dev}"
+}
+
+if [ "${1:-}" = "--version" ] || [ "${1:-}" = "version" ]; then
+    print_version
+    exit 0
+fi
+
+if [ $# -eq 0 ]; then
+    echo "Usage: halo 'your message here'"
+    echo "       halo \"Single sentence for HAL-006 delivery\""
+    exit 1
+fi
+
+if [ $# -gt 1 ]; then
+    echo "Error: halo supports single sentences only."
+    echo "Use hal for multi-sentence streaming speech."
+    exit 1
+fi
+
+if ! curl -s --max-time 3 "$XTTS_HEALTH_URL" >/dev/null 2>&1; then
+    echo "Error: HALO XTTS service not available at $XTTS_HEALTH_URL"
+    exit 1
+fi
+
+sentence="$1"
+if [[ ! "$sentence" =~ [.!?]$ ]]; then
+    sentence="${sentence}."
+fi
+
+encoded_text=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$sentence'''))" 2>/dev/null || echo "$sentence" | sed 's/ /+/g')
+TMPFILE=$(mktemp /tmp/halo_XXXXXX.wav)
+
+HTTP_CODE=$(curl -s -o "$TMPFILE" -w "%{http_code}" \
+    "${XTTS_ENDPOINT}?text=${encoded_text}&style_wav=${STYLE_WAV}&language_id=${LANGUAGE}")
+
+if [ "$HTTP_CODE" != "200" ]; then
+    echo "Error: XTTS generation failed (HTTP $HTTP_CODE)"
+    rm -f "$TMPFILE"
+    exit 1
+fi
+
+FILE_TYPE=$(file -b "$TMPFILE")
+if [[ ! "$FILE_TYPE" =~ WAV|RIFF|audio ]]; then
+    echo "Error: Invalid audio response from XTTS"
+    rm -f "$TMPFILE"
+    exit 1
+fi
+
+aplay "$TMPFILE" 2>/dev/null || paplay "$TMPFILE" 2>/dev/null || {
+    echo "Error: No audio player available (tried aplay, paplay)"
+    rm -f "$TMPFILE"
+    exit 1
+}
+
+rm -f "$TMPFILE"
+exit 0

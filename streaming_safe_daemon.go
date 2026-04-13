@@ -672,6 +672,12 @@ func (d *StreamingDaemon) handleSpeak(w http.ResponseWriter, r *http.Request) {
 func (d *StreamingDaemon) handleHealth(w http.ResponseWriter, r *http.Request) {
 	status := map[string]interface{}{
 		"status":         "streaming-safe-ready",
+		"service":        getEnvDefault("HAL_SERVICE_NAME", "hal-tts"),
+		"version":        getEnvDefault("HAL_SERVICE_VERSION", "0.0.0+build.0"),
+		"version_core":   getEnvDefault("HAL_SERVICE_VERSION_CORE", "0.0.0"),
+		"build":          getEnvDefault("HAL_SERVICE_BUILD", "0"),
+		"release_id":     getEnvDefault("HAL_RELEASE_ID", "dev"),
+		"source_commit":  getEnvDefault("HAL_SOURCE_COMMIT", ""),
 		"warmed_clients": len(d.warmupPool),
 		"audio_ready":    len(d.playbackReady) > 0,
 		"timestamp":      time.Now().Unix(),
@@ -822,7 +828,7 @@ func main() {
 	}()
 
 	bindAddr := getBindAddr()
-	log.Printf("STREAMING SAFE TTS daemon ready on %s (localhost access at http://localhost:8091)", bindAddr)
+	log.Printf("STREAMING SAFE TTS daemon ready on %s (localhost access at http://localhost:8091) version=%s release=%s", bindAddr, getEnvDefault("HAL_SERVICE_VERSION", "0.0.0+build.0"), getEnvDefault("HAL_RELEASE_ID", "dev"))
 
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatalf("Server failed: %v", err)

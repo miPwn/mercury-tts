@@ -5,8 +5,27 @@
 # OR:    hal "single long sentence with periods and URLs like example.com"
 # Handles multiple arguments as separate sentences for optimal TTS processing
 
+SCRIPT_SELF="${BASH_SOURCE[0]:-$0}"
+if command -v realpath >/dev/null 2>&1; then
+    SCRIPT_SELF=$(realpath "$SCRIPT_SELF" 2>/dev/null || printf '%s' "$SCRIPT_SELF")
+fi
+SCRIPT_DIR=$(cd -- "$(dirname -- "$SCRIPT_SELF")" && pwd)
+VERSION_FILE="${HAL_VERSION_FILE:-$SCRIPT_DIR/.hal-version}"
 TTS_ENDPOINT="http://localhost:8091/speak"
 SPEAKER="p254"
+
+print_version() {
+    if [ -f "$VERSION_FILE" ]; then
+        cat "$VERSION_FILE"
+        return
+    fi
+    printf '%s\n' "${HAL_SERVICE_VERSION:-dev}"
+}
+
+if [ "${1:-}" = "--version" ] || [ "${1:-}" = "version" ]; then
+    print_version
+    exit 0
+fi
 
 if [ $# -eq 0 ]; then
     echo "Usage: hal 'your text here'"

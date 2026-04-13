@@ -36,8 +36,9 @@ Primary local service endpoints:
 The current operator helper script is:
 
 - [`hal`](F:/DEVELOPMENT/FALCON_LOCAL/halo-system/mercury-tts/hal)
+- [`halo`](F:/DEVELOPMENT/FALCON_LOCAL/halo-system/mercury-tts/halo)
 
-That script is a thin TTS client only. It is not a runtime shell.
+These scripts are thin TTS clients only. They are not runtime shells.
 
 ## Development
 
