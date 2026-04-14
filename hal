@@ -11,8 +11,9 @@ if command -v realpath >/dev/null 2>&1; then
 fi
 SCRIPT_DIR=$(cd -- "$(dirname -- "$SCRIPT_SELF")" && pwd)
 VERSION_FILE="${HAL_VERSION_FILE:-$SCRIPT_DIR/.hal-version}"
-TTS_ENDPOINT="http://localhost:8091/speak"
-SPEAKER="p254"
+TTS_ENDPOINT="${HAL_TTS_ENDPOINT:-http://localhost:8091/speak}"
+TTS_HEALTH_ENDPOINT="${HAL_TTS_HEALTH_ENDPOINT:-http://localhost:8091/health}"
+SPEAKER="${HAL_TTS_SPEAKER:-${HAL_SPEAKER:-p254}}"
 
 print_version() {
     if [ -f "$VERSION_FILE" ]; then
@@ -38,8 +39,8 @@ if [ $# -eq 0 ]; then
 fi
 
 # Check TTS service health first
-if ! curl -s --max-time 2 "http://localhost:8091/health" >/dev/null 2>&1; then
-    echo "Error: HAL TTS service not available at localhost:8091"
+if ! curl -s --max-time 2 "$TTS_HEALTH_ENDPOINT" >/dev/null 2>&1; then
+    echo "Error: HAL TTS service not available at $TTS_HEALTH_ENDPOINT"
     exit 1
 fi
 

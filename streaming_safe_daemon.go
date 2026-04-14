@@ -26,26 +26,36 @@ import (
 )
 
 const (
-	defaultSpeaker = "p245"
-	dragThreshold  = 3 * time.Second
 	defaultBind    = "0.0.0.0:8091" // Default IPv4 bind; can be overridden via env TTS_BIND_ADDR
-	warmupCount    = 5
-	maxRetries     = 2
-	// Latency optimization: multiple TTS endpoints for load distribution
-	maxConcurrentGeneration = 10 // Aggressive concurrent generation
 )
 
 var (
-	ttsURL1 = getEnvDefault("TTS_URL1", "http://localhost:5002/api/tts")
-	ttsURL2 = getEnvDefault("TTS_URL2", ttsURL1)
+	defaultSpeaker = firstNonEmptyEnv("HAL_SPEAKER", "DEFAULT_SPEAKER", "p245")
+	dragThreshold  = getEnvDuration("DRAG_THRESHOLD_SECONDS", 3*time.Second)
+	warmupCount    = getEnvInt("WARMUP_CONNECTION_COUNT", 5)
+	maxRetries     = getEnvInt("MAX_RETRIES", 2)
+	// Latency optimization: multiple TTS endpoints for load distribution
+	maxConcurrentGeneration = getEnvInt("MAX_CONCURRENT_GENERATION", 10)
+	ttsURL1                = getEnvDefault("TTS_LOADBALANCER_URL", "http://127.0.0.1:5002/api/tts")
+	ttsURL2                = getEnvDefault("TTS_DIRECT_URL", ttsURL1)
 	// VBAN configuration
-	playbackMode   = getEnvDefault("PLAYBACK_MODE", "aplay") // "aplay" or "vban"
-	vbanTargetIP   = getEnvDefault("VBAN_TARGET_IP", "192.168.1.100")
-	vbanTargetPort = getEnvDefault("VBAN_TARGET_PORT", "6980")
-	vbanStreamName = getEnvDefault("VBAN_STREAM_NAME", "Falcon")
-	dotmatrixEnabled = getEnvDefault("HAL_DOTMATRIX_ENABLED", "0") == "1"
+	playbackMode      = getEnvDefault("PLAYBACK_MODE", "aplay") // "aplay" or "vban"
+	playbackDevice    = getEnvDefault("PLAYBACK_DEVICE", "default")
+	vbanTargetIP      = getEnvDefault("VBAN_TARGET_IP", "192.168.1.100")
+	vbanTargetPort    = getEnvDefault("VBAN_TARGET_PORT", "6980")
+	vbanStreamName    = getEnvDefault("VBAN_STREAM_NAME", "Falcon")
+	dotmatrixEnabled  = getEnvBool("HAL_DOTMATRIX_ENABLED", false)
 	dotmatrixQueueDir = getEnvDefault("HAL_DOTMATRIX_QUEUE_DIR", "/tmp/halo-dotmatrix/queue")
-	dotmatrixWavDir = getEnvDefault("HAL_DOTMATRIX_WAV_DIR", "/tmp/halo-dotmatrix/wav")
+	dotmatrixWavDir   = getEnvDefault("HAL_DOTMATRIX_WAV_DIR", "/tmp/halo-dotmatrix/wav")
+	outputDirRoot     = getEnvDefault("TTS_TMP_AUDIO_DIR", "/tmp/streaming_safe_daemon")
+	httpTimeout       = getEnvDuration("HTTP_TIMEOUT_SECONDS", 30*time.Second)
+	httpHeaderTimeout = getEnvDuration("HTTP_RESPONSE_HEADER_TIMEOUT_SECONDS", 10*time.Second)
+	maxIdleConns      = getEnvInt("MAX_IDLE_CONNECTIONS", 100)
+	maxIdleConnsHost  = getEnvInt("MAX_IDLE_CONNECTIONS_PER_HOST", 20)
+	idleConnTimeout   = getEnvDuration("IDLE_CONNECTION_TIMEOUT_SECONDS", 300*time.Second)
+	readTimeout       = getEnvDuration("DAEMON_READ_TIMEOUT", 2*time.Second)
+	writeTimeout      = getEnvDuration("DAEMON_WRITE_TIMEOUT", 30*time.Second)
+	idleTimeout       = getEnvDuration("DAEMON_IDLE_TIMEOUT", 60*time.Second)
 )
 
 type SpeakRequest struct {
@@ -68,7 +78,7 @@ type TTSChunk struct {
 }
 
 func NewStreamingDaemon() *StreamingDaemon {
-	outputDir := "/tmp/streaming_safe_daemon"
+	outputDir := outputDirRoot
 	os.RemoveAll(outputDir)
 	os.MkdirAll(outputDir, 0755)
 
@@ -76,13 +86,13 @@ func NewStreamingDaemon() *StreamingDaemon {
 
 	daemon := &StreamingDaemon{
 		client: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: httpTimeout,
 			Transport: &http.Transport{
-				MaxIdleConns:          100,
-				MaxIdleConnsPerHost:   20,
-				IdleConnTimeout:       300 * time.Second,
+				MaxIdleConns:          maxIdleConns,
+				MaxIdleConnsPerHost:   maxIdleConnsHost,
+				IdleConnTimeout:       idleConnTimeout,
 				DisableKeepAlives:     false,
-				ResponseHeaderTimeout: 10 * time.Second,
+				ResponseHeaderTimeout: httpHeaderTimeout,
 			},
 		},
 		outputDir:     outputDir,
@@ -123,13 +133,13 @@ func (d *StreamingDaemon) preWarmSystem() {
 		defer wg.Done()
 		for i := 0; i < warmupCount; i++ {
 			client := &http.Client{
-				Timeout: 30 * time.Second,
+				Timeout: httpTimeout,
 				Transport: &http.Transport{
-					MaxIdleConns:          50,
-					MaxIdleConnsPerHost:   10,
-					IdleConnTimeout:       300 * time.Second,
+					MaxIdleConns:          maxIdleConns,
+					MaxIdleConnsPerHost:   maxIdleConnsHost,
+					IdleConnTimeout:       idleConnTimeout,
 					DisableKeepAlives:     false,
-					ResponseHeaderTimeout: 10 * time.Second,
+					ResponseHeaderTimeout: httpHeaderTimeout,
 				},
 			}
 
@@ -187,7 +197,7 @@ func (d *StreamingDaemon) preWarmSystem() {
 				fmt.Sprintf("tail -c +45 %q | /usr/local/bin/vban_emitter -i %q -p %q -s %q -b pipe -f 16I -r 22050 -n 1",
 					silentFile, vbanTargetIP, vbanTargetPort, vbanStreamName))
 		} else {
-			cmd = exec.CommandContext(ctx, "aplay", "-D", "default", silentFile)
+			cmd = exec.CommandContext(ctx, "aplay", "-D", playbackDevice, silentFile)
 		}
 
 		if output, err := cmd.CombinedOutput(); err != nil {
@@ -302,7 +312,7 @@ func (d *StreamingDaemon) playAudioOptimized(chunk *TTSChunk) {
 
 	log.Printf("PLAY: Immediate playback chunk %d (latency optimized)", chunk.Index)
 
-	cmd := exec.Command("aplay", "-D", "default", chunk.FilePath)
+	cmd := exec.Command("aplay", "-D", playbackDevice, chunk.FilePath)
 	cmd.Stderr = nil
 
 	if err := cmd.Run(); err != nil {
@@ -567,7 +577,7 @@ func (d *StreamingDaemon) streamingPlaybackOptimized(chunks []*TTSChunk, ttsStar
 				}
 			} else {
 				// Default to aplay
-				cmd = exec.Command("aplay", "-D", "default", chunk.FilePath)
+				cmd = exec.Command("aplay", "-D", playbackDevice, chunk.FilePath)
 				cmd.Stdout = &stdout
 				cmd.Stderr = &stderr
 				if err := cmd.Run(); err != nil {
@@ -771,12 +781,56 @@ func getBindAddr() string {
 	if v := os.Getenv("TTS_BIND_ADDR"); v != "" {
 		return v
 	}
+	host := os.Getenv("DAEMON_HOST")
+	port := os.Getenv("DAEMON_PORT")
+	if host != "" && port != "" {
+		return host + ":" + port
+	}
 	return defaultBind
 }
 
 func getEnvDefault(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return def
+}
+
+func firstNonEmptyEnv(keys ...string) string {
+	for _, key := range keys[:len(keys)-1] {
+		if v := os.Getenv(key); v != "" {
+			return v
+		}
+	}
+	return keys[len(keys)-1]
+}
+
+func getEnvInt(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil {
+			return parsed
+		}
+	}
+	return def
+}
+
+func getEnvBool(key string, def bool) bool {
+	if v := os.Getenv(key); v != "" {
+		if parsed, err := strconv.ParseBool(v); err == nil {
+			return parsed
+		}
+	}
+	return def
+}
+
+func getEnvDuration(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if parsed, err := strconv.ParseFloat(v, 64); err == nil {
+			return time.Duration(parsed * float64(time.Second))
+		}
+		if parsed, err := time.ParseDuration(v); err == nil {
+			return parsed
+		}
 	}
 	return def
 }
@@ -812,9 +866,9 @@ func main() {
 	server := &http.Server{
 		Addr:         getBindAddr(), // Bind address is configurable via env TTS_BIND_ADDR
 		Handler:      nil,
-		ReadTimeout:  2 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		ReadTimeout:  readTimeout,
+		WriteTimeout: writeTimeout,
+		IdleTimeout:  idleTimeout,
 	}
 
 	sigChan := make(chan os.Signal, 1)
