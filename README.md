@@ -35,8 +35,8 @@ Primary local service endpoints:
 
 The current operator helper script is:
 
-- [`hal`](F:/DEVELOPMENT/FALCON_LOCAL/halo-system/mercury-tts/hal)
-- [`halo`](F:/DEVELOPMENT/FALCON_LOCAL/halo-system/mercury-tts/halo)
+- [`hal`](./hal)
+- [`halo`](./halo)
 
 These scripts are thin TTS clients only. They are not runtime shells.
 
@@ -50,10 +50,10 @@ go test ./...
 
 Important files:
 
-- [`instant_tts_daemon.go`](F:/DEVELOPMENT/FALCON_LOCAL/halo-system/mercury-tts/instant_tts_daemon.go)
-- [`speak_client.go`](F:/DEVELOPMENT/FALCON_LOCAL/halo-system/mercury-tts/speak_client.go)
-- [`Dockerfile.hal-tts`](F:/DEVELOPMENT/FALCON_LOCAL/halo-system/mercury-tts/Dockerfile.hal-tts)
-- [`hal-tts.service`](F:/DEVELOPMENT/FALCON_LOCAL/halo-system/mercury-tts/hal-tts.service)
+- [`instant_tts_daemon.go`](./instant_tts_daemon.go)
+- [`speak_client.go`](./speak_client.go)
+- [`Dockerfile.hal-tts`](./Dockerfile.hal-tts)
+- [`hal-tts.service`](./hal-tts.service)
 
 ## Notes
 
